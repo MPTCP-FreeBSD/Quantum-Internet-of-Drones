@@ -80,10 +80,10 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
     result = noisy_sim.run(measured_circuit, shots=shots).result()
     end = time.time()
 
-    latency = end - start
-    throughput = shots / latency
+    qunatum_teleporttion_time_for_1bell_pair = 10 ^ 6  # 10 microseconds
+    throughput = shots / qunatum_teleporttion_time_for_1bell_pair
 
-    return fidelity_b, fidelity_full, latency, throughput
+    return fidelity_b, fidelity_full, qunatum_teleporttion_time_for_1bell_pair, throughput
 
 
 # -------------------------------
@@ -91,13 +91,14 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
 # -------------------------------
 
 nodes = [f'N{i}' for i in range(5)]
-noise_model = build_noise_model()
+
 results = []
 
 for src, dst in combinations(nodes, 2):  # Total 10 links
     segments = [f"{src}-R1", "R1-R2", f"R2-{dst}"]
 
     for segment in segments:
+        noise_model = build_noise_model()
         fidelity_b, fidelity_full, latency, throughput = evaluate_teleportation_segment(noise_model)
         results.append({
             'link': f"{src}-{dst}",
@@ -107,7 +108,7 @@ for src, dst in combinations(nodes, 2):  # Total 10 links
             'latency_sec': latency,
             'throughput_qubits_per_sec': throughput
         })
-        print(f"Evaluated: {segment} | Fidelity(b): {fidelity_b:.4f} | Latency: {latency:.4f}s")
+        print(f"Evaluated: {segment} | Fidelity(b): {fidelity_b:.4f} | Fidelity(full state): {fidelity_full:.4f}| throughput_qubits_per_sec: {throughput:.4f} | Latency: {latency:.4f}s")
 
 # Save to CSV and Excel
 df = pd.DataFrame(results)
