@@ -5,11 +5,10 @@ from itertools import combinations
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit_aer import AerSimulator
 from qiskit.quantum_info import Statevector, state_fidelity, partial_trace
-from qiskit_aer.noise import NoiseModel, thermal_relaxation_error, depolarizing_error, amplitude_damping_error,pauli_error
+from qiskit_aer.noise import NoiseModel, thermal_relaxation_error, depolarizing_error, amplitude_damping_error, pauli_error
 
 # Import your custom teleportation circuit builder
-from utils.ibm_lab_util import build_qc  # Make sure this is available
-
+from utils.ibm_lab_util import build_qc  # Ensure this file and function exist
 
 def init_qc():
     """Initialize teleportation circuit with input state."""
@@ -17,77 +16,89 @@ def init_qc():
     cr = ClassicalRegister(3, name="c")
     teleportation_circuit = build_qc(qr, cr)
 
-    # Prepare input state on qubit s (index 0)
     state_prep = QuantumCircuit(qr, cr)
     state_prep.rx(math.pi / 4, qr[0])
     state_prep.barrier()
 
-    return state_prep.compose(teleportation_circuit), qr, cr, qr[2]  # Return full circuit and Bob's qubit
-
+    return state_prep.compose(teleportation_circuit), qr, cr, qr[2]
 
 def build_noise_model(cross_talk_level=0):
     """
-    Construct a realistic noise model for simulation.
-    
+    Build a realistic noise model with tunable cross-talk.
+
     Parameters:
-        cross_talk_level (int): Level of cross-talk (0-10). Higher values imply more simultaneous gate interference.
-    
+        cross_talk_level (int): Cross-talk level (0–10). Higher => more noise.
+
     Returns:
-        NoiseModel: A configured Qiskit NoiseModel with cross-talk adaptation.
+        NoiseModel: Configured Qiskit noise model.
     """
     if not (0 <= cross_talk_level <= 10):
         raise ValueError("cross_talk_level must be between 0 and 10.")
 
     noise_model = NoiseModel()
 
-    # Base error rates
-    base_single_qubit_error = 0.02 + 0.003 * cross_talk_level
-    base_two_qubit_error = 0.04 + 0.006 * cross_talk_level
+    # Constants
     thermal_t1 = 100e-3  # T1 = 100 ms
     thermal_t2 = 80e-3   # T2 = 80 ms
-    gate_time = 50e-9    # 50 ns gate time
+    gate_time = 50e-9    # 50 ns
 
-    # Apply realistic single-qubit noise
-    depol_error_1q = depolarizing_error(base_single_qubit_error, 1)
-    thermal_error_1q = thermal_relaxation_error(thermal_t1, thermal_t2, gate_time)
-    combined_1q_error = depol_error_1q.compose(thermal_error_1q)
+    # Base error rates (adjusted by cross-talk)
+    base_1q_error = 0.02 + 0.003 * cross_talk_level
+    base_2q_error = 0.04 + 0.006 * cross_talk_level
+    amp_damp_prob = 0.05 + 0.005 * cross_talk_level
+    crosstalk_prob = 0.005 * cross_talk_level if cross_talk_level > 0 else 0.0
 
-    noise_model.add_all_qubit_quantum_error(combined_1q_error, ['u1', 'u2', 'u3', 'x', 'z', 'h'])
+    # ----- 1-Qubit Errors -----
+    depol_1q = depolarizing_error(base_1q_error, 1)
+    thermal_1q = thermal_relaxation_error(thermal_t1, thermal_t2, gate_time)
+    amp_damp_1q = amplitude_damping_error(amp_damp_prob)
+    crosstalk_1q = pauli_error([('X', crosstalk_prob), ('I', 1 - crosstalk_prob)]) if crosstalk_prob > 0 else None
 
-    # Apply realistic two-qubit noise with cross-talk influence
-    depol_error_2q = depolarizing_error(base_two_qubit_error, 2)
-    noise_model.add_all_qubit_quantum_error(depol_error_2q, ['cx'])
+    combined_1q = depol_1q.compose(thermal_1q).compose(amp_damp_1q)
+    if crosstalk_1q:
+        combined_1q = combined_1q.compose(crosstalk_1q)
 
-    # Amplitude damping (often relevant in photonic or mobile scenarios like drones)
-    damping_error = amplitude_damping_error(0.05 + 0.005 * cross_talk_level)
-    noise_model.add_all_qubit_quantum_error(damping_error, ['x', 'z'])
+    noise_model.add_all_qubit_quantum_error(
+        combined_1q, ['u1', 'u2', 'u3', 'x', 'z', 'h']
+    )
 
-    # Optional: simulate simultaneous gate execution cross-talk as Pauli noise
-    # Optional: simulate simultaneous gate execution cross-talk as Pauli noise
-    if cross_talk_level > 0:
-        crosstalk_prob = 0.005 * cross_talk_level
+    # ----- 2-Qubit Errors -----
+    depol_2q = depolarizing_error(base_2q_error, 2)
+    crosstalk_2q = depolarizing_error(crosstalk_prob, 2) if crosstalk_prob > 0 else None
 
-        # 1-qubit cross-talk error
-        crosstalk_1q_error = pauli_error([('X', crosstalk_prob), ('I', 1 - crosstalk_prob)])
-        noise_model.add_all_qubit_quantum_error(crosstalk_1q_error, ['x', 'h', 'z'])
+    combined_2q = depol_2q
+    if crosstalk_2q:
+        combined_2q = combined_2q.compose(crosstalk_2q)
 
-        # 2-qubit cross-talk error (affecting both qubits)
-        crosstalk_2q_error = depolarizing_error(crosstalk_prob, 2)
-        noise_model.add_all_qubit_quantum_error(crosstalk_2q_error, ['cx'])
-
+    noise_model.add_all_qubit_quantum_error(combined_2q, ['cx'])
 
     return noise_model
+
+def compute_throughput(fidelity, teleportation_time, shots):
+    raw_throughput = shots / teleportation_time
+    effective_throughput = fidelity * raw_throughput
+    return raw_throughput, effective_throughput
+
+# # Example
+# shots = 1000
+# teleportation_time = 10e-6  # seconds
+# fidelity = 0.92
+
+# raw, effective = compute_throughput(fidelity, teleportation_time, shots)
+# print(f"Raw Throughput:       {raw:.2e} qubits/sec")
+# print(f"Effective Throughput: {effective:.2e} qubits/sec")
 
 
 def evaluate_teleportation_segment(noise_model, shots=1000):
     """Run teleportation with noise and return fidelity, latency, and throughput."""
     # Step 1: Get teleportation circuit
     teleport_circuit, qr, cr, b = init_qc()
+    teleport_circuit.draw("mpl", cregbundle=False)
 
     # Step 2: Simulators
     ideal_sim = AerSimulator(method="statevector")
     noisy_sim = AerSimulator(noise_model=noise_model, method="statevector")
-
+    
     # Save statevectors
     ideal_circuit = teleport_circuit.copy()
     ideal_circuit.save_statevector()
@@ -116,90 +127,65 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
     result = noisy_sim.run(measured_circuit, shots=shots).result()
     end = time.time()
 
-    qunatum_teleporttion_time_for_1bell_pair = 10e-6  # 10 microseconds
-    throughput = shots / qunatum_teleporttion_time_for_1bell_pair
+    teleportation_time = 10e-6  # 10 microseconds
+    throughput = shots / teleportation_time
 
-    return fidelity_b, fidelity_full, qunatum_teleporttion_time_for_1bell_pair, throughput
+    raw, effective = compute_throughput(fidelity_full, teleportation_time, shots)
 
+    return fidelity_b, fidelity_full, teleportation_time, raw, effective
 
 # -------------------------------
-# Main Script to Loop All Links
+# Main Execution
 # -------------------------------
 
+def main():
+    nodes = [f'N{i}' for i in range(5)]
+    results = []
+    all_segments = []
 
+    for src, dst in combinations(nodes, 2):
+        segments = [f"{src}-R1", "R1-R2", f"R2-{dst}"]
+        all_segments += segments
 
+    unique_segments = list(set(all_segments))
 
-nodes = [f'N{i}' for i in range(5)]
-noise_model = 2
-results = []
+    segment_cross_talk_dict = {}
+    for segment in all_segments:
+        segment_cross_talk_dict[segment] = segment_cross_talk_dict.get(segment, 0) + 1
 
-all_segments = []
+    print("Unique Segments and Cross-talk Levels:")
+    for seg, count in segment_cross_talk_dict.items():
+        print(f"  {seg}: {count}")
 
+    for src, dst in combinations(nodes, 2):
+        segments = [f"{src}-R1", "R1-R2", f"R2-{dst}"]
 
-for src, dst in combinations(nodes, 2):  # Total 10 links
-    print("=== combinations: %d, %d",src,dst)
-    segments = [f"{src}-R1", "R1-R2", f"R2-{dst}"]
-    all_segments+=segments
+        for segment in segments:
+            level = segment_cross_talk_dict[segment]
+            print(f"Evaluating segment: {segment} with cross-talk level {level}")
 
-# node_comm = (('N0','N1'),('N2','N3'))
-# for src, dst in node_comm:  # Total 10 links
-#     print("=== combinations: %d, %d",src,dst)
-#     segments = [f"{src}-R1", "R1-R2", f"R2-{dst}"]
-#     all_segments+=segments
+            if level == 2:
+                continue
 
-print("all_segments: ",all_segments)
+            noise_model = build_noise_model(cross_talk_level=level)
+            fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(noise_model)
 
-print("len(all_segments): ",len(all_segments))
+            results.append({
+                'link': f"{src}-{dst}",
+                'segment': segment,
+                'fidelity_qubit_b_only': fidelity_b,
+                'fidelity_full_state': fidelity_full,
+                'latency_sec': latency,
+                'raw_throughput_qubits_per_sec': raw,
+                'effective_throughput_qubits_per_sec': effective,
+            })
 
-unique_segments = list(set(all_segments))
+            print(f"  → Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Latency: {latency:.4e}s, Raw Throughput: {raw:.2e} q/s, Effective Throughput: {effective:.2e} q/s")
 
-print("unique_segments: ",unique_segments)
+    df = pd.DataFrame(results)
+    df.to_csv("quantum_network_metrics.csv", index=False)
+    df.to_excel("quantum_network_metrics.xlsx", index=False)
+    print("\n✅ Results saved to CSV and Excel.")
 
-print("len(unique_segments): ",len(unique_segments))
-
-segment_cross_talk_dict = {}
-
-for segment in unique_segments:
-    for othersegment in all_segments:
-        if segment == othersegment:
-            if segment_cross_talk_dict.get(segment) is None:
-                segment_cross_talk_dict[segment] = 0
-            else:
-                segment_cross_talk_dict[segment]+=1
-
-
-print()
-print("segment_cross_talk_dict",segment_cross_talk_dict)
-
-
-
-
-
-
-results = []
-
-for src, dst in combinations(nodes, 2):  # Total 10 links
-    segments = [f"{src}-R1", "R1-R2", f"R2-{dst}"]
-
-    for segment in segments:
-        print("cross-talk level:" , segment_cross_talk_dict[segment])
-        noise_model = build_noise_model(cross_talk_level=segment_cross_talk_dict[segment])
-        fidelity_b, fidelity_full, latency, throughput = evaluate_teleportation_segment(noise_model)
-        results.append({
-            'link': f"{src}-{dst}",
-            'segment': segment,
-            'fidelity_qubit_b_only': fidelity_b,
-            'fidelity_full_state': fidelity_full,
-            'latency_sec': latency,
-            'throughput_qubits_per_sec': throughput
-        })
-        print(f"Evaluated: {segment} | Fidelity(b): {fidelity_b:.4f} | Fidelity(full state): {fidelity_full:.4f}| throughput_qubits_per_sec: {throughput:.4f} | Latency: {latency:.4f}s")
-
-# Save to CSV and Excel
-df = pd.DataFrame(results)
-df.to_csv("quantum_network_metrics.csv", index=False)
-
-
-print("\n✅ Teleportation metrics saved to:")
-print("  • quantum_network_metrics.csv")
-
+if __name__ == "__main__":
+    main()
