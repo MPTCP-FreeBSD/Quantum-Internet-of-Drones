@@ -26,9 +26,6 @@ from qiskit.quantum_info import Kraus
 import numpy as np
 import itertools
 
-from qiskit.quantum_info import Kraus
-import numpy as np
-import itertools
 
 def create_cross_kraus_error(crosstalk_strength=0.02):
     """Safely creates CPTP 2-qubit crosstalk Kraus channel."""
