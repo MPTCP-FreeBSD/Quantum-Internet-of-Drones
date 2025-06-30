@@ -6,6 +6,10 @@ from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit_aer import AerSimulator
 from qiskit.quantum_info import Statevector, state_fidelity, partial_trace
 from qiskit_aer.noise import NoiseModel, thermal_relaxation_error, depolarizing_error, amplitude_damping_error, pauli_error
+from qiskit.quantum_info import Kraus
+import numpy as np
+import itertools
+
 
 # Import your custom teleportation circuit builder
 from utils.ibm_lab_util import build_qc  # Ensure this file and function exist
@@ -22,9 +26,7 @@ def init_qc():
 
     return state_prep.compose(teleportation_circuit), qr, cr, qr[2]
 
-from qiskit.quantum_info import Kraus
-import numpy as np
-import itertools
+
 
 
 def create_cross_kraus_error(crosstalk_strength=0.02):
