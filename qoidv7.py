@@ -21,7 +21,9 @@ from qiskit_aer.noise import (
     NoiseModel, 
     depolarizing_error, 
     amplitude_damping_error, 
-    thermal_relaxation_error
+    thermal_relaxation_error,
+    phase_damping_error,
+    pauli_error
 )
 
 
@@ -80,97 +82,25 @@ class QuantumCrosstalkSimulator:
         # Convert to Kraus (unitary channel has single Kraus operator)
         return Kraus([zz_unitary])
     
-    # def create_amplitude_phase_crosstalk_kraus(self, amp_strength: float, phase_strength: float) -> Kraus:
-    #     """Create combined amplitude and phase crosstalk."""
-    #     # Amplitude damping on both qubits
-    #     sqrt_gamma = np.sqrt(amp_strength)
-    #     K0 = np.sqrt(1 - amp_strength) * np.eye(4)
+    def create_amplitude_phase_crosstalk_error(self, amp_strength: float, phase_strength: float):
+        """Create combined amplitude and phase crosstalk using Qiskit's built-in error models."""
+        # Use Qiskit's built-in amplitude and phase damping errors
+        amp_error = amplitude_damping_error(amp_strength)
+        phase_error = phase_damping_error(phase_strength)
         
-    #     # Amplitude damping operators
-    #     A0, A1 = np.array([[1, 0], [0, np.sqrt(1-amp_strength)]]), np.array([[0, sqrt_gamma], [0, 0]])
-    #     K1 = np.kron(A1, np.eye(2))  # First qubit amplitude damping
-    #     K2 = np.kron(np.eye(2), A1)  # Second qubit amplitude damping
+        # For 2-qubit crosstalk, we'll create correlated errors
+        # First, create single-qubit errors for each qubit
+        amp_error_2q = amp_error.tensor(amp_error)  # Independent amplitude damping on both qubits
+        phase_error_2q = phase_error.tensor(phase_error)  # Independent phase damping on both qubits
         
-    #     # Phase damping (dephasing)
-    #     P0 = np.array([[1, 0], [0, np.sqrt(1-phase_strength)]])
-    #     P1 = np.array([[0, 0], [0, np.sqrt(phase_strength)]])
-    #     K3 = np.sqrt(phase_strength) * np.kron(P1, P1)  # Correlated dephasing
+        # Combine them (this creates a mixed error model)
+        combined_error = amp_error_2q.compose(phase_error_2q)
         
-    #     return Kraus([K0, K1, K2, K3])
-
-    def create_amplitude_phase_crosstalk_kraus(self, amp_strength: float, phase_strength: float) -> Kraus:
-        """Create combined amplitude and phase crosstalk."""
-        # Ensure strengths are valid
-        if amp_strength < 0 or amp_strength > 1 or phase_strength < 0 or phase_strength > 1:
-            raise ValueError("Strengths must be between 0 and 1")
-        
-        # For 2-qubit system, we need to create proper Kraus operators
-        # that satisfy the completeness relation: sum(K_i^† K_i) = I
-        
-        # Define single-qubit operators
-        I = np.eye(2)
-        
-        # Amplitude damping operators for single qubit
-        sqrt_gamma = np.sqrt(amp_strength)
-        A0 = np.array([[1, 0], [0, np.sqrt(1 - amp_strength)]])  # |0><0| + sqrt(1-γ)|1><1|
-        A1 = np.array([[0, sqrt_gamma], [0, 0]])  # sqrt(γ)|0><1|
-        
-        # Phase damping (dephasing) operators for single qubit
-        sqrt_phi = np.sqrt(phase_strength)
-        P0 = np.array([[1, 0], [0, np.sqrt(1 - phase_strength)]])  # |0><0| + sqrt(1-φ)|1><1|
-        P1 = np.array([[0, 0], [0, sqrt_phi]])  # sqrt(φ)|1><1|
-        
-        # Create 2-qubit Kraus operators
-        # We'll use a simplified model where amplitude and phase errors can occur independently
-        
-        # No error on either qubit
-        K0 = np.kron(A0, A0) * np.sqrt((1 - phase_strength)**2)
-        
-        # Amplitude damping on first qubit only
-        K1 = np.kron(A1, A0) * np.sqrt(1 - phase_strength)
-        
-        # Amplitude damping on second qubit only  
-        K2 = np.kron(A0, A1) * np.sqrt(1 - phase_strength)
-        
-        # Phase damping on first qubit
-        K3 = np.kron(P1, I) * np.sqrt(1 - amp_strength)
-        
-        # Phase damping on second qubit
-        K4 = np.kron(I, P1) * np.sqrt(1 - amp_strength)
-        
-        # Correlated amplitude damping (both qubits)
-        K5 = np.kron(A1, A1)
-        
-        # Mixed amplitude-phase errors (simplified)
-        K6 = np.kron(A1, P1) * np.sqrt(0.5)
-        K7 = np.kron(P1, A1) * np.sqrt(0.5)
-        
-        kraus_ops = [K0, K1, K2, K3, K4, K5, K6, K7]
-        
-        # Normalize to satisfy CPTP condition
-        # Calculate sum of K_i^† K_i
-        total_sum = sum(np.conj(K).T @ K for K in kraus_ops)
-        
-        # Check if normalization is needed
-        trace_sum = np.trace(total_sum).real
-        if not np.isclose(trace_sum, 4.0, atol=1e-10):  # Should be 4 for 2-qubit system
-            # Renormalize all operators
-            normalization_factor = np.sqrt(4.0 / trace_sum)
-            kraus_ops = [K * normalization_factor for K in kraus_ops]
-        
-        # Remove very small operators to avoid numerical issues
-        kraus_ops = [K for K in kraus_ops if np.linalg.norm(K) > 1e-12]
-        
-        # Final verification
-        final_sum = sum(np.conj(K).T @ K for K in kraus_ops)
-        if not np.allclose(final_sum, np.eye(4), atol=1e-10):
-            print(f"Warning: CPTP condition not satisfied. Trace deviation: {np.trace(final_sum) - 4:.2e}")
-            # Force normalization by adjusting the first operator
-            deviation = np.eye(4) - final_sum
-            if len(kraus_ops) > 0:
-                kraus_ops[0] = kraus_ops[0] + deviation * 0.5
-        
-        return Kraus(kraus_ops)
+        return combined_error
+    
+    def create_depolarizing_crosstalk_error(self, strength: float):
+        """Create depolarizing crosstalk error."""
+        return depolarizing_error(strength, 2)
     
     def create_random_crosstalk_kraus(self, strength: float, num_operators: int = 4) -> Kraus:
         """Create random crosstalk using random unitary matrices."""
@@ -240,18 +170,29 @@ class QuantumCrosstalkSimulator:
                 coupling_angle = crosstalk_config.get('coupling_angle', np.pi/4)
                 crosstalk_kraus = self.create_zz_crosstalk_kraus(crosstalk_strength, coupling_angle)
             elif crosstalk_type == 'amp_phase':
+                # Use the new method that returns a proper Qiskit error
                 amp_strength = crosstalk_config.get('amp_strength', crosstalk_strength/2)
                 phase_strength = crosstalk_config.get('phase_strength', crosstalk_strength/2)
-                crosstalk_kraus = self.create_amplitude_phase_crosstalk_kraus(amp_strength, phase_strength)
+                crosstalk_error = self.create_amplitude_phase_crosstalk_error(amp_strength, phase_strength)
+                # Apply the error directly
+                noise_model.add_quantum_error(crosstalk_error, ['cx', 'cz'], [q1, q2])
+                print(f"  → Applied {crosstalk_type} crosstalk (amp={amp_strength:.4f}, phase={phase_strength:.4f}) to qubits ({q1}, {q2})")
+                continue  # Skip the Kraus application below
+            elif crosstalk_type == 'depolarizing':
+                crosstalk_error = self.create_depolarizing_crosstalk_error(crosstalk_strength)
+                noise_model.add_quantum_error(crosstalk_error, ['cx', 'cz'], [q1, q2])
+                print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to qubits ({q1}, {q2})")
+                continue  # Skip the Kraus application below
             elif crosstalk_type == 'random':
                 num_ops = crosstalk_config.get('num_operators', 4)
                 crosstalk_kraus = self.create_random_crosstalk_kraus(crosstalk_strength, num_ops)
             else:
                 raise ValueError(f"Unknown crosstalk type: {crosstalk_type}")
             
-            # Apply crosstalk to 2-qubit gates on this pair
-            noise_model.add_quantum_error(crosstalk_kraus, ['cx', 'cz'], [q1, q2])
-            print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to qubits ({q1}, {q2})")
+            # Apply crosstalk to 2-qubit gates on this pair (only for Kraus-based methods)
+            if crosstalk_type in ['pauli', 'zz', 'random']:
+                noise_model.add_quantum_error(crosstalk_kraus, ['cx', 'cz'], [q1, q2])
+                print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to qubits ({q1}, {q2})")
         
         return noise_model
     
@@ -470,7 +411,6 @@ class QuantumCrosstalkSimulator:
         print(f"Info throughput: {throughput['info_throughput_bits_per_sec']:.0f} bits/sec")
 
         # Data to store
-        # Data to store
         result_row = {
             'full_state_fidelity': full_fidelity,
             'ideal_purity': ideal_purity,
@@ -511,8 +451,9 @@ class QuantumCrosstalkSimulator:
 
         df.to_csv(csv_file, index=False)
         
-        print("self.reults.length",len(self.results))
-        print("self.reults[0]",self.results[0])
+        print("self.results.length", len(self.results))
+        if len(self.results) > 0:
+            print("self.results[0]", self.results[0])
 
         # Return result for further use
         return df
@@ -595,11 +536,9 @@ def main_simulation():
     
     # Run parameter sweep
     results_df = simulator.run_parameter_sweep(
-        # circuit_types=['ghz', 'random_circuit', 'all_pairs','teleportation'],
         circuit_types=['teleportation'],
         crosstalk_strengths=[0.001, 0.005, 0.01, 0.02, 0.05, 0.1],
-        # crosstalk_types=['amp_phase','pauli','random', 'zz'],
-        crosstalk_types=['amp_phase','random'],
+        crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz'],
         pair_counts=[1, 2, 3, 4],
         shots=1000
     )
@@ -615,26 +554,27 @@ def main_simulation():
     print("\n📈 Summary Statistics:")
     print("-" * 40)
     
-    summary_stats = results_df.groupby(['crosstalk_type', 'circuit_type']).agg({
-        'full_state_fidelity': ['mean', 'std', 'min', 'max'],
-        'purity_loss': ['mean', 'std'],
-        'trace_distance': ['mean', 'std']
-    }).round(4)
-    
-    print(summary_stats)
-    
-    # Best and worst performing configurations
-    print("\n🏆 Best Performing Configurations (Highest Fidelity):")
-    best_configs = results_df.nlargest(5, 'full_state_fidelity')[
-        ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
-    ]
-    print(best_configs.to_string(index=False))
-    
-    print("\n💥 Worst Performing Configurations (Lowest Fidelity):")
-    worst_configs = results_df.nsmallest(5, 'full_state_fidelity')[
-        ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
-    ]
-    print(worst_configs.to_string(index=False))
+    if len(results_df) > 0:
+        summary_stats = results_df.groupby(['crosstalk_type', 'circuit_type']).agg({
+            'full_state_fidelity': ['mean', 'std', 'min', 'max'],
+            'purity_loss': ['mean', 'std'],
+            'trace_distance': ['mean', 'std']
+        }).round(4)
+        
+        print(summary_stats)
+        
+        # Best and worst performing configurations
+        print("\n🏆 Best Performing Configurations (Highest Fidelity):")
+        best_configs = results_df.nlargest(5, 'full_state_fidelity')[
+            ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
+        ]
+        print(best_configs.to_string(index=False))
+        
+        print("\n💥 Worst Performing Configurations (Lowest Fidelity):")
+        worst_configs = results_df.nsmallest(5, 'full_state_fidelity')[
+            ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
+        ]
+        print(worst_configs.to_string(index=False))
     
     return results_df
 

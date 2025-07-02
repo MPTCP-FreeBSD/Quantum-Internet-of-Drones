@@ -21,7 +21,9 @@ from qiskit_aer.noise import (
     NoiseModel, 
     depolarizing_error, 
     amplitude_damping_error, 
-    thermal_relaxation_error
+    thermal_relaxation_error,
+    phase_damping_error,
+    pauli_error
 )
 
 
@@ -80,97 +82,25 @@ class QuantumCrosstalkSimulator:
         # Convert to Kraus (unitary channel has single Kraus operator)
         return Kraus([zz_unitary])
     
-    # def create_amplitude_phase_crosstalk_kraus(self, amp_strength: float, phase_strength: float) -> Kraus:
-    #     """Create combined amplitude and phase crosstalk."""
-    #     # Amplitude damping on both qubits
-    #     sqrt_gamma = np.sqrt(amp_strength)
-    #     K0 = np.sqrt(1 - amp_strength) * np.eye(4)
+    def create_amplitude_phase_crosstalk_error(self, amp_strength: float, phase_strength: float):
+        """Create combined amplitude and phase crosstalk using Qiskit's built-in error models."""
+        # Use Qiskit's built-in amplitude and phase damping errors
+        amp_error = amplitude_damping_error(amp_strength)
+        phase_error = phase_damping_error(phase_strength)
         
-    #     # Amplitude damping operators
-    #     A0, A1 = np.array([[1, 0], [0, np.sqrt(1-amp_strength)]]), np.array([[0, sqrt_gamma], [0, 0]])
-    #     K1 = np.kron(A1, np.eye(2))  # First qubit amplitude damping
-    #     K2 = np.kron(np.eye(2), A1)  # Second qubit amplitude damping
+        # For 2-qubit crosstalk, we'll create correlated errors
+        # First, create single-qubit errors for each qubit
+        amp_error_2q = amp_error.tensor(amp_error)  # Independent amplitude damping on both qubits
+        phase_error_2q = phase_error.tensor(phase_error)  # Independent phase damping on both qubits
         
-    #     # Phase damping (dephasing)
-    #     P0 = np.array([[1, 0], [0, np.sqrt(1-phase_strength)]])
-    #     P1 = np.array([[0, 0], [0, np.sqrt(phase_strength)]])
-    #     K3 = np.sqrt(phase_strength) * np.kron(P1, P1)  # Correlated dephasing
+        # Combine them (this creates a mixed error model)
+        combined_error = amp_error_2q.compose(phase_error_2q)
         
-    #     return Kraus([K0, K1, K2, K3])
-
-    def create_amplitude_phase_crosstalk_kraus(self, amp_strength: float, phase_strength: float) -> Kraus:
-        """Create combined amplitude and phase crosstalk."""
-        # Ensure strengths are valid
-        if amp_strength < 0 or amp_strength > 1 or phase_strength < 0 or phase_strength > 1:
-            raise ValueError("Strengths must be between 0 and 1")
-        
-        # For 2-qubit system, we need to create proper Kraus operators
-        # that satisfy the completeness relation: sum(K_i^† K_i) = I
-        
-        # Define single-qubit operators
-        I = np.eye(2)
-        
-        # Amplitude damping operators for single qubit
-        sqrt_gamma = np.sqrt(amp_strength)
-        A0 = np.array([[1, 0], [0, np.sqrt(1 - amp_strength)]])  # |0><0| + sqrt(1-γ)|1><1|
-        A1 = np.array([[0, sqrt_gamma], [0, 0]])  # sqrt(γ)|0><1|
-        
-        # Phase damping (dephasing) operators for single qubit
-        sqrt_phi = np.sqrt(phase_strength)
-        P0 = np.array([[1, 0], [0, np.sqrt(1 - phase_strength)]])  # |0><0| + sqrt(1-φ)|1><1|
-        P1 = np.array([[0, 0], [0, sqrt_phi]])  # sqrt(φ)|1><1|
-        
-        # Create 2-qubit Kraus operators
-        # We'll use a simplified model where amplitude and phase errors can occur independently
-        
-        # No error on either qubit
-        K0 = np.kron(A0, A0) * np.sqrt((1 - phase_strength)**2)
-        
-        # Amplitude damping on first qubit only
-        K1 = np.kron(A1, A0) * np.sqrt(1 - phase_strength)
-        
-        # Amplitude damping on second qubit only  
-        K2 = np.kron(A0, A1) * np.sqrt(1 - phase_strength)
-        
-        # Phase damping on first qubit
-        K3 = np.kron(P1, I) * np.sqrt(1 - amp_strength)
-        
-        # Phase damping on second qubit
-        K4 = np.kron(I, P1) * np.sqrt(1 - amp_strength)
-        
-        # Correlated amplitude damping (both qubits)
-        K5 = np.kron(A1, A1)
-        
-        # Mixed amplitude-phase errors (simplified)
-        K6 = np.kron(A1, P1) * np.sqrt(0.5)
-        K7 = np.kron(P1, A1) * np.sqrt(0.5)
-        
-        kraus_ops = [K0, K1, K2, K3, K4, K5, K6, K7]
-        
-        # Normalize to satisfy CPTP condition
-        # Calculate sum of K_i^† K_i
-        total_sum = sum(np.conj(K).T @ K for K in kraus_ops)
-        
-        # Check if normalization is needed
-        trace_sum = np.trace(total_sum).real
-        if not np.isclose(trace_sum, 4.0, atol=1e-10):  # Should be 4 for 2-qubit system
-            # Renormalize all operators
-            normalization_factor = np.sqrt(4.0 / trace_sum)
-            kraus_ops = [K * normalization_factor for K in kraus_ops]
-        
-        # Remove very small operators to avoid numerical issues
-        kraus_ops = [K for K in kraus_ops if np.linalg.norm(K) > 1e-12]
-        
-        # Final verification
-        final_sum = sum(np.conj(K).T @ K for K in kraus_ops)
-        if not np.allclose(final_sum, np.eye(4), atol=1e-10):
-            print(f"Warning: CPTP condition not satisfied. Trace deviation: {np.trace(final_sum) - 4:.2e}")
-            # Force normalization by adjusting the first operator
-            deviation = np.eye(4) - final_sum
-            if len(kraus_ops) > 0:
-                kraus_ops[0] = kraus_ops[0] + deviation * 0.5
-        
-        return Kraus(kraus_ops)
+        return combined_error
+    
+    def create_depolarizing_crosstalk_error(self, strength: float):
+        """Create depolarizing crosstalk error."""
+        return depolarizing_error(strength, 2)
     
     def create_random_crosstalk_kraus(self, strength: float, num_operators: int = 4) -> Kraus:
         """Create random crosstalk using random unitary matrices."""
@@ -240,18 +170,29 @@ class QuantumCrosstalkSimulator:
                 coupling_angle = crosstalk_config.get('coupling_angle', np.pi/4)
                 crosstalk_kraus = self.create_zz_crosstalk_kraus(crosstalk_strength, coupling_angle)
             elif crosstalk_type == 'amp_phase':
+                # Use the new method that returns a proper Qiskit error
                 amp_strength = crosstalk_config.get('amp_strength', crosstalk_strength/2)
                 phase_strength = crosstalk_config.get('phase_strength', crosstalk_strength/2)
-                crosstalk_kraus = self.create_amplitude_phase_crosstalk_kraus(amp_strength, phase_strength)
+                crosstalk_error = self.create_amplitude_phase_crosstalk_error(amp_strength, phase_strength)
+                # Apply the error directly
+                noise_model.add_quantum_error(crosstalk_error, ['cx', 'cz'], [q1, q2])
+                print(f"  → Applied {crosstalk_type} crosstalk (amp={amp_strength:.4f}, phase={phase_strength:.4f}) to qubits ({q1}, {q2})")
+                continue  # Skip the Kraus application below
+            elif crosstalk_type == 'depolarizing':
+                crosstalk_error = self.create_depolarizing_crosstalk_error(crosstalk_strength)
+                noise_model.add_quantum_error(crosstalk_error, ['cx', 'cz'], [q1, q2])
+                print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to qubits ({q1}, {q2})")
+                continue  # Skip the Kraus application below
             elif crosstalk_type == 'random':
                 num_ops = crosstalk_config.get('num_operators', 4)
                 crosstalk_kraus = self.create_random_crosstalk_kraus(crosstalk_strength, num_ops)
             else:
                 raise ValueError(f"Unknown crosstalk type: {crosstalk_type}")
             
-            # Apply crosstalk to 2-qubit gates on this pair
-            noise_model.add_quantum_error(crosstalk_kraus, ['cx', 'cz'], [q1, q2])
-            print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to qubits ({q1}, {q2})")
+            # Apply crosstalk to 2-qubit gates on this pair (only for Kraus-based methods)
+            if crosstalk_type in ['pauli', 'zz', 'random']:
+                noise_model.add_quantum_error(crosstalk_kraus, ['cx', 'cz'], [q1, q2])
+                print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to qubits ({q1}, {q2})")
         
         return noise_model
     
@@ -470,7 +411,6 @@ class QuantumCrosstalkSimulator:
         print(f"Info throughput: {throughput['info_throughput_bits_per_sec']:.0f} bits/sec")
 
         # Data to store
-        # Data to store
         result_row = {
             'full_state_fidelity': full_fidelity,
             'ideal_purity': ideal_purity,
@@ -497,7 +437,14 @@ class QuantumCrosstalkSimulator:
             'purity_loss': ideal_purity - noisy_purity,
             'trace_distance': trace_distance,
             'execution_time': execution_time,
-            'num_intersecting_pairs': len(intersecting_pairs)
+            'num_intersecting_pairs': len(intersecting_pairs),
+            'total_time_us': throughput['total_time_us'],
+            'raw_ops_per_sec': throughput['raw_ops_per_sec'],
+            'effective_ops_per_sec': throughput['effective_ops_per_sec'],
+            'quantum_volume': throughput['quantum_volume'],
+            'info_throughput_bits_per_sec': throughput['info_throughput_bits_per_sec'],
+            'error_corrected_throughput': throughput['error_corrected_throughput'],
+            'success_rate': throughput['success_rate']
         }
     
     def save_csv(self):
@@ -511,8 +458,9 @@ class QuantumCrosstalkSimulator:
 
         df.to_csv(csv_file, index=False)
         
-        print("self.reults.length",len(self.results))
-        print("self.reults[0]",self.results[0])
+        print("self.results.length", len(self.results))
+        if len(self.results) > 0:
+            print("self.results[0]", self.results[0])
 
         # Return result for further use
         return df
@@ -595,11 +543,9 @@ def main_simulation():
     
     # Run parameter sweep
     results_df = simulator.run_parameter_sweep(
-        # circuit_types=['ghz', 'random_circuit', 'all_pairs','teleportation'],
         circuit_types=['teleportation'],
         crosstalk_strengths=[0.001, 0.005, 0.01, 0.02, 0.05, 0.1],
-        # crosstalk_types=['amp_phase','pauli','random', 'zz'],
-        crosstalk_types=['amp_phase','random'],
+        crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz'],
         pair_counts=[1, 2, 3, 4],
         shots=1000
     )
@@ -615,80 +561,235 @@ def main_simulation():
     print("\n📈 Summary Statistics:")
     print("-" * 40)
     
-    summary_stats = results_df.groupby(['crosstalk_type', 'circuit_type']).agg({
-        'full_state_fidelity': ['mean', 'std', 'min', 'max'],
-        'purity_loss': ['mean', 'std'],
-        'trace_distance': ['mean', 'std']
-    }).round(4)
-    
-    print(summary_stats)
-    
-    # Best and worst performing configurations
-    print("\n🏆 Best Performing Configurations (Highest Fidelity):")
-    best_configs = results_df.nlargest(5, 'full_state_fidelity')[
-        ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
-    ]
-    print(best_configs.to_string(index=False))
-    
-    print("\n💥 Worst Performing Configurations (Lowest Fidelity):")
-    worst_configs = results_df.nsmallest(5, 'full_state_fidelity')[
-        ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
-    ]
-    print(worst_configs.to_string(index=False))
+    if len(results_df) > 0:
+        summary_stats = results_df.groupby(['crosstalk_type', 'circuit_type']).agg({
+            'full_state_fidelity': ['mean', 'std', 'min', 'max'],
+            'purity_loss': ['mean', 'std'],
+            'trace_distance': ['mean', 'std']
+        }).round(4)
+        
+        print(summary_stats)
+        
+        # Best and worst performing configurations
+        print("\n🏆 Best Performing Configurations (Highest Fidelity):")
+        best_configs = results_df.nlargest(5, 'full_state_fidelity')[
+            ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
+        ]
+        print(best_configs.to_string(index=False))
+        
+        print("\n💥 Worst Performing Configurations (Lowest Fidelity):")
+        worst_configs = results_df.nsmallest(5, 'full_state_fidelity')[
+            ['circuit_type', 'crosstalk_type', 'crosstalk_strength', 'num_intersecting_pairs', 'full_state_fidelity']
+        ]
+        print(worst_configs.to_string(index=False))
     
     return results_df
 
+
+# Replace the visualization section at the end of your main code with this:
 
 if __name__ == "__main__":
     # Run the main simulation
     results = main_simulation()
     
-    # Optional: Create some basic visualizations if matplotlib/seaborn available
+    # Create comprehensive visualizations including throughput analysis
     try:
-        plt.figure(figsize=(15, 10))
+        # Create a larger figure with more subplots
+        plt.figure(figsize=(20, 15))
         
         # Plot 1: Fidelity vs Crosstalk Strength
-        plt.subplot(2, 2, 1)
+        plt.subplot(3, 3, 1)
         for ct_type in results['crosstalk_type'].unique():
             data = results[results['crosstalk_type'] == ct_type]
             grouped = data.groupby('crosstalk_strength')['full_state_fidelity'].mean()
-            plt.plot(grouped.index, grouped.values, marker='o', label=ct_type)
+            plt.plot(grouped.index, grouped.values, marker='o', label=ct_type, linewidth=2)
         plt.xlabel('Crosstalk Strength')
         plt.ylabel('Average Fidelity')
         plt.title('Fidelity vs Crosstalk Strength')
         plt.legend()
         plt.grid(True, alpha=0.3)
+        plt.yscale('linear')
         
-        # Plot 2: Purity Loss vs Number of Intersecting Pairs
-        plt.subplot(2, 2, 2)
+        # Plot 2: Effective Operations per Second vs Crosstalk Strength
+        plt.subplot(3, 3, 2)
+        for ct_type in results['crosstalk_type'].unique():
+            data = results[results['crosstalk_type'] == ct_type]
+            grouped = data.groupby('crosstalk_strength')['effective_ops_per_sec'].mean()
+            plt.plot(grouped.index, grouped.values, marker='s', label=ct_type, linewidth=2)
+        plt.xlabel('Crosstalk Strength')
+        plt.ylabel('Effective Ops/Second')
+        plt.title('Effective Throughput vs Crosstalk Strength')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.yscale('log')  # Log scale for better visualization
+        
+        # Plot 3: Quantum Volume vs Crosstalk Strength
+        plt.subplot(3, 3, 3)
+        for ct_type in results['crosstalk_type'].unique():
+            data = results[results['crosstalk_type'] == ct_type]
+            grouped = data.groupby('crosstalk_strength')['quantum_volume'].mean()
+            plt.plot(grouped.index, grouped.values, marker='^', label=ct_type, linewidth=2)
+        plt.xlabel('Crosstalk Strength')
+        plt.ylabel('Quantum Volume')
+        plt.title('Quantum Volume vs Crosstalk Strength')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 4: Information Throughput vs Crosstalk Strength  
+        plt.subplot(3, 3, 4)
+        for ct_type in results['crosstalk_type'].unique():
+            data = results[results['crosstalk_type'] == ct_type]
+            grouped = data.groupby('crosstalk_strength')['info_throughput_bits_per_sec'].mean()
+            plt.plot(grouped.index, grouped.values, marker='d', label=ct_type, linewidth=2)
+        plt.xlabel('Crosstalk Strength')
+        plt.ylabel('Info Throughput (bits/sec)')
+        plt.title('Information Throughput vs Crosstalk Strength')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.yscale('log')
+        
+        # Plot 5: Error-Corrected Throughput vs Crosstalk Strength
+        plt.subplot(3, 3, 5)
+        for ct_type in results['crosstalk_type'].unique():
+            data = results[results['crosstalk_type'] == ct_type]
+            # Filter out infinite values for visualization
+            finite_data = data[np.isfinite(data['error_corrected_throughput'])]
+            if len(finite_data) > 0:
+                grouped = finite_data.groupby('crosstalk_strength')['error_corrected_throughput'].mean()
+                plt.plot(grouped.index, grouped.values, marker='p', label=ct_type, linewidth=2)
+        plt.xlabel('Crosstalk Strength')
+        plt.ylabel('Error-Corrected Throughput (ops/sec)')
+        plt.title('Error-Corrected Throughput vs Crosstalk Strength')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.yscale('log')
+        
+        # Plot 6: Success Rate vs Crosstalk Strength
+        plt.subplot(3, 3, 6)
+        for ct_type in results['crosstalk_type'].unique():
+            data = results[results['crosstalk_type'] == ct_type]
+            grouped = data.groupby('crosstalk_strength')['success_rate'].mean()
+            plt.plot(grouped.index, grouped.values, marker='h', label=ct_type, linewidth=2)
+        plt.xlabel('Crosstalk Strength')
+        plt.ylabel('Success Rate')
+        plt.title('Success Rate vs Crosstalk Strength')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 7: Throughput Efficiency Heatmap (Fidelity vs Throughput)
+        plt.subplot(3, 3, 7)
+        # Create efficiency metric: normalized throughput * fidelity
+        results['throughput_efficiency'] = (results['effective_ops_per_sec'] / results['effective_ops_per_sec'].max()) * results['full_state_fidelity']
+        pivot_data = results.groupby(['crosstalk_type', 'crosstalk_strength'])['throughput_efficiency'].mean().unstack()
+        sns.heatmap(pivot_data, annot=True, cmap='viridis', fmt='.3f', cbar_kws={'label': 'Throughput Efficiency'})
+        plt.title('Throughput Efficiency by Crosstalk Type & Strength')
+        plt.ylabel('Crosstalk Type')
+        plt.xlabel('Crosstalk Strength')
+        
+        # Plot 8: Purity Loss vs Number of Intersecting Pairs
+        plt.subplot(3, 3, 8)
         sns.boxplot(data=results, x='num_intersecting_pairs', y='purity_loss')
         plt.xlabel('Number of Intersecting Pairs')
         plt.ylabel('Purity Loss')
         plt.title('Purity Loss vs Intersecting Pairs')
         
-        # Plot 3: Heatmap of Fidelity by Circuit Type and Crosstalk Type
-        plt.subplot(2, 2, 3)
-        pivot_data = results.groupby(['circuit_type', 'crosstalk_type'])['full_state_fidelity'].mean().unstack()
-        sns.heatmap(pivot_data, annot=True, cmap='viridis', fmt='.3f')
-        plt.title('Average Fidelity by Circuit and Crosstalk Type')
-        
-        # Plot 4: Execution Time vs Configuration Complexity
-        plt.subplot(2, 2, 4)
+        # Plot 9: Throughput vs Complexity Scatter Plot
+        plt.subplot(3, 3, 9)
         results['complexity'] = results['crosstalk_strength'] * results['num_intersecting_pairs']
-        plt.scatter(results['complexity'], results['execution_time'], 
-                   c=results['full_state_fidelity'], cmap='coolwarm', alpha=0.7)
+        scatter = plt.scatter(results['complexity'], results['effective_ops_per_sec'], 
+                   c=results['full_state_fidelity'], cmap='coolwarm', alpha=0.7, s=50)
         plt.xlabel('Configuration Complexity')
-        plt.ylabel('Execution Time (s)')
-        plt.title('Execution Time vs Complexity')
-        plt.colorbar(label='Fidelity')
+        plt.ylabel('Effective Throughput (ops/sec)')
+        plt.title('Throughput vs Complexity')
+        plt.yscale('log')
+        plt.colorbar(scatter, label='Fidelity')
         
         plt.tight_layout()
-        plt.savefig('quantum_crosstalk_analysis.png', dpi=300, bbox_inches='tight')
+        plt.savefig('quantum_crosstalk_throughput_analysis.png', dpi=300, bbox_inches='tight')
         plt.show()
         
-        print("\n📊 Visualization saved as 'quantum_crosstalk_analysis.png'")
+        print("\n📊 Comprehensive visualization saved as 'quantum_crosstalk_throughput_analysis.png'")
+        
+        # Additional throughput analysis
+        print("\n🚀 Throughput Analysis Summary:")
+        print("-" * 50)
+        
+        # Find optimal operating points
+        for ct_type in results['crosstalk_type'].unique():
+            ct_data = results[results['crosstalk_type'] == ct_type]
+            
+            # Find strength that maximizes throughput efficiency
+            best_efficiency_idx = ct_data['throughput_efficiency'].idxmax()
+            best_config = ct_data.loc[best_efficiency_idx]
+            
+            print(f"\n{ct_type.upper()} Crosstalk:")
+            print(f"  Optimal strength: {best_config['crosstalk_strength']:.4f}")
+            print(f"  Max throughput efficiency: {best_config['throughput_efficiency']:.4f}")
+            print(f"  Effective ops/sec: {best_config['effective_ops_per_sec']:.0f}")
+            print(f"  Fidelity at optimum: {best_config['full_state_fidelity']:.4f}")
+            print(f"  Quantum volume: {best_config['quantum_volume']:.2f}")
+        
+        # Throughput degradation analysis
+        print(f"\n📉 Throughput Degradation Analysis:")
+        print("-" * 40)
+        
+        # Calculate throughput degradation as crosstalk increases
+        for ct_type in results['crosstalk_type'].unique():
+            ct_data = results[results['crosstalk_type'] == ct_type]
+            min_strength = ct_data['crosstalk_strength'].min()
+            max_strength = ct_data['crosstalk_strength'].max()
+            
+            min_throughput = ct_data[ct_data['crosstalk_strength'] == min_strength]['effective_ops_per_sec'].mean()
+            max_throughput = ct_data[ct_data['crosstalk_strength'] == max_strength]['effective_ops_per_sec'].mean()
+            
+            degradation_factor = min_throughput / max_throughput if max_throughput > 0 else np.inf
+            
+            print(f"{ct_type}: {degradation_factor:.1f}x throughput reduction from min to max strength")
         
     except ImportError:
         print("\n📊 Matplotlib/Seaborn not available for visualization")
     except Exception as e:
         print(f"\n📊 Visualization error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# Additional utility function for throughput analysis
+def analyze_throughput_trends(results_df):
+    """
+    Detailed throughput trend analysis function.
+    """
+    print("\n🔍 Detailed Throughput Trend Analysis:")
+    print("=" * 60)
+    
+    # Group by crosstalk type and analyze trends
+    for ct_type in results_df['crosstalk_type'].unique():
+        ct_data = results_df[results_df['crosstalk_type'] == ct_type]
+        
+        print(f"\n{ct_type.upper()} Crosstalk Analysis:")
+        print("-" * 30)
+        
+        # Calculate correlation between strength and throughput metrics
+        strength_corr_effective = ct_data['crosstalk_strength'].corr(ct_data['effective_ops_per_sec'])
+        strength_corr_volume = ct_data['crosstalk_strength'].corr(ct_data['quantum_volume'])
+        strength_corr_info = ct_data['crosstalk_strength'].corr(ct_data['info_throughput_bits_per_sec'])
+        
+        print(f"Correlation with crosstalk strength:")
+        print(f"  Effective throughput: {strength_corr_effective:.3f}")
+        print(f"  Quantum volume: {strength_corr_volume:.3f}")
+        print(f"  Info throughput: {strength_corr_info:.3f}")
+        
+        # Find throughput cliff (where performance drops significantly)
+        sorted_data = ct_data.sort_values('crosstalk_strength')
+        throughput_values = sorted_data['effective_ops_per_sec'].values
+        
+        # Look for largest drop
+        if len(throughput_values) > 1:
+            drops = np.diff(throughput_values) / throughput_values[:-1] * 100  # Percentage drops
+            max_drop_idx = np.argmin(drops)  # Most negative (largest drop)
+            cliff_strength = sorted_data.iloc[max_drop_idx]['crosstalk_strength']
+            cliff_drop = abs(drops[max_drop_idx])
+            
+            print(f"Throughput cliff at strength {cliff_strength:.4f} (drop: {cliff_drop:.1f}%)")
+    
+    return results_df
