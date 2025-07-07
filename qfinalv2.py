@@ -44,68 +44,6 @@ def init_qc():
 
     return state_prep.compose(teleportation_circuit), qr, cr, qr[2]
 
-# Mocking utils.ibm_lab_util.py to match the new circuit definition
-# This new build_qc function exactly implements the steps from the prompt.
-def create_bell_pair(qr: QuantumRegister, cr: ClassicalRegister) -> QuantumCircuit:
-    """Creates a bell pair between qubits a and b."""
-    qc = QuantumCircuit(qr, cr)
-    # unpack qubits
-    s, a, b = qr # s = qr[0], a = qr[1], b = qr[2]
-
-    # Put qubit a into state |+>
-    qc.h(a) # Applies to qr[1]
-    # CNOT with a as control and b as target
-    qc.cx(a, b) # Applies to (qr[1], qr[2])
-
-    return qc
-
-def alice_gates(qr: QuantumRegister, cr: ClassicalRegister):
-    """Creates Alices's gates"""
-    qc = create_bell_pair(qr, cr)
-    qc.barrier() 
-    s, a, b = qr # s = qr[0], a = qr[1], b = qr[2]
-
-    # CNOT with source as control and a as target
-    qc.cx(s, a) # Applies to (qr[0], qr[1])
-    # Apply Hadamard on qubit s
-    qc.h(s) # Applies to qr[0]
-
-    return qc
-
-def measure_and_send(qr: QuantumRegister, cr: ClassicalRegister):
-    """Measures qubits a & b and 'sends' the results to Bob"""
-    qc = alice_gates(qr, cr)
-    qc.barrier() 
-    s, a, b = qr # s = qr[0], a = qr[1], b = qr[2]
-    c0, c1, c2 = cr # Assuming c0 = cr[0], c1 = cr[1], c2 = cr[2]
-
-    # Measure qubit a into classical bit 0
-    qc.measure(a, c0) # Measures qr[1] into cr[0]
-    # Measure qubit s into classical bit 1
-    qc.measure(s, c1) # Measures qr[0] into cr[1]
-
-    return qc
-
-def bob_gates(qr: QuantumRegister, cr: ClassicalRegister):
-    """Uses qc.if_test to control which gates are dynamically added"""
-    qc = measure_and_send(qr, cr)
-    qc.barrier() 
-    s, a, b = qr # s = qr[0], a = qr[1], b = qr[2]
-    c0, c1, c2 = cr # Assuming c0 = cr[0], c1 = cr[1], c2 = cr[2]
-
-    # Add an X gate to the qubit wire if c0 measures 1
-    with qc.if_test((c0, 1)): # Based on cr[0]
-        qc.x(b) # Applies to qr[2]
-    # Add a Z gate to the qubit wire if c1 measures 1
-    with qc.if_test((c1, 1)): # Based on cr[1]
-        qc.z(b) # Applies to qr[2]
-
-    return qc
-
-def build_qc(qr: QuantumRegister, cr: ClassicalRegister):
-    """Builds the quantum circuit for the teleportation protocol."""
-    return bob_gates(qr, cr)
-
 # No changes needed for these helper functions for creating Kraus/Error objects
 def create_pauli_crosstalk_kraus( strength: float, pauli_type: str = 'XX') -> Kraus:
     """Create Pauli-based crosstalk Kraus operators."""
