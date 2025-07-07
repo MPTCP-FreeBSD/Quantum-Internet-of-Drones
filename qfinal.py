@@ -222,7 +222,7 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
     """Run teleportation with noise and return fidelity, latency, and throughput."""
     # Step 1: Get teleportation circuit
     teleport_circuit, qr, cr, b = init_qc()
-    teleport_circuit.draw("mpl", cregbundle=False)
+    # teleport_circuit.draw("mpl", cregbundle=False)
 
     # Step 2: Simulators
     ideal_sim = AerSimulator(method="density_matrix")
@@ -322,3 +322,48 @@ def main():
 
 if __name__ == "__main__":
     main()
+    import matplotlib.pyplot as plt
+
+    def plot_results():
+        df = pd.read_csv("quantum_network_metrics.csv")
+
+        # Regenerate the column with crosstalk_strength and type since they are not stored in your dict
+        # Assuming crosstalk_strengths and crosstalk_types were used in nested loop
+        crosstalk_strengths = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.3, 0.5, 0.8, 1]
+        crosstalk_types = ['amp_phase', 'pauli', 'depolarizing']
+        repeated_strengths = crosstalk_strengths * len(crosstalk_types)
+        types = [t for t in crosstalk_types for _ in range(len(crosstalk_strengths))]
+
+        df['crosstalk_strength'] = repeated_strengths
+        df['crosstalk_type'] = types
+
+        # --- Fidelity Plot ---
+        plt.figure(figsize=(10, 6))
+        for ctype in crosstalk_types:
+            subset = df[df['crosstalk_type'] == ctype]
+            plt.plot(subset['crosstalk_strength'], subset['fidelity_full_state'], marker='o', label=ctype)
+        plt.xlabel("Crosstalk Strength")
+        plt.ylabel("Full State Fidelity")
+        plt.title("Fidelity vs Crosstalk Strength")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("fidelity_vs_crosstalk.png")
+        plt.show()
+
+        # --- Effective Throughput Plot ---
+        plt.figure(figsize=(10, 6))
+        for ctype in crosstalk_types:
+            subset = df[df['crosstalk_type'] == ctype]
+            plt.plot(subset['crosstalk_strength'], subset['effective_throughput_qubits_per_sec'], marker='s', label=ctype)
+        plt.xlabel("Crosstalk Strength")
+        plt.ylabel("Effective Throughput (qubits/sec)")
+        plt.title("Effective Throughput vs Crosstalk Strength")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("effective_throughput_vs_crosstalk.png")
+        plt.show()
+
+    plot_results()
+
