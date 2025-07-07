@@ -248,8 +248,8 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
     noisy_dm = DensityMatrix(noisy_result.data(0)['density_matrix'])
 
 
-    ideal_result = ideal_sim.run(ideal_circuit).result()
-    noisy_result = noisy_sim.run(noisy_circuit).result()
+    ideal_result = ideal_sim.run(ideal_circuit, shots=shots).result()
+    noisy_result = noisy_sim.run(noisy_circuit, shots=shots).result()
 
 
     # Step 3: Fidelity
@@ -265,12 +265,8 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
     measured_circuit = teleport_circuit.copy()
     measured_circuit.measure_all()
 
-    start = time.time()
-    result = noisy_sim.run(measured_circuit, shots=shots).result()
-    end = time.time()
 
     teleportation_time = 10e-6  # 10 microseconds
-    throughput = shots / teleportation_time
 
     raw, effective = compute_throughput(fidelity_full, teleportation_time, shots)
 
