@@ -44,7 +44,7 @@ def init_qc():
 
     return state_prep.compose(teleportation_circuit), qr, cr, qr[2]
 
-# No changes needed for these helper functions for creating Kraus/Error objects
+
 def create_pauli_crosstalk_kraus( strength: float, pauli_type: str = 'XX') -> Kraus:
     """Create Pauli-based crosstalk Kraus operators."""
     I = np.eye(2)
@@ -304,45 +304,47 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
 # -------------------------------
 
 def main():
-    crosstalk_strengths=[0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1,  0.3, 0.5, 0.8, 1]
+    crosstalk_strengths=[0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.3, 0.5, 0.8, 1]
     crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz', 'random'] 
-    # crosstalk_types=['depolarizing'] 
     results=[]
     
     print("Starting teleportation simulation with various crosstalk noise models...")
 
-    for crosstalk_strength in crosstalk_strengths:
-        for crosstalk_type in crosstalk_types:
-            print(f"\nSimulating with: Crosstalk Strength = {crosstalk_strength}, Type = {crosstalk_type}")
+    for iterations in range(1,10):
 
-            crosstalk_config = {
-                'type': crosstalk_type,
-                'strength': crosstalk_strength,
-                'base_1q_error': 0.001,
-                'base_2q_error': 0.005,
-                'pauli_type': 'XX',  # for Pauli crosstalk
-                'coupling_angle': np.pi/4,  # for ZZ crosstalk
-                'amp_strength': crosstalk_strength/2,  # for amp_phase crosstalk
-                'phase_strength': crosstalk_strength/2
-            }
-            noise_model = build_crosstalk_noise_model(crosstalk_config)
+        for crosstalk_strength in crosstalk_strengths:
+            for crosstalk_type in crosstalk_types:
+                print(f"\nSimulating with: Crosstalk Strength = {crosstalk_strength}, Type = {crosstalk_type}")
 
-            shots_for_throughput = 1000 
-            fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
-                noise_model, shots=shots_for_throughput
-            )
+                crosstalk_config = {
+                    'type': crosstalk_type,
+                    'strength': crosstalk_strength,
+                    'base_1q_error': 0.001,
+                    'base_2q_error': 0.005,
+                    'pauli_type': 'XX',  # for Pauli crosstalk
+                    'coupling_angle': np.pi/4,  # for ZZ crosstalk
+                    'amp_strength': crosstalk_strength/2,  # for amp_phase crosstalk
+                    'phase_strength': crosstalk_strength/2
+                }
+                noise_model = build_crosstalk_noise_model(crosstalk_config)
 
-            results.append({
-                'crosstalk_type': crosstalk_type,
-                'crosstalk_strength': crosstalk_strength,
-                'fidelity_qubit_b_only': fidelity_b,
-                'fidelity_full_state': fidelity_full,
-                'latency_sec': latency,
-                'raw_throughput_qubits_per_sec': raw,
-                'effective_throughput_qubits_per_sec': effective,
-            })
+                shots_for_throughput = 1000 
+                fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
+                    noise_model, shots=shots_for_throughput
+                )
 
-            print(f"  → Results: Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Latency: {latency:.4e}s, Raw Throughput: {raw:.2e} q/s, Effective Throughput: {effective:.2e} q/s")
+                results.append({
+                    'iterations': iterations,
+                    'crosstalk_type': crosstalk_type,
+                    'crosstalk_strength': crosstalk_strength,
+                    'fidelity_qubit_b_only': fidelity_b,
+                    'fidelity_full_state': fidelity_full,
+                    'latency_sec': latency,
+                    'raw_throughput_qubits_per_sec': raw,
+                    'effective_throughput_qubits_per_sec': effective,
+                })
+
+                print(f"  → Results: Iterations: {iterations:.4f} Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Latency: {latency:.4e}s, Raw Throughput: {raw:.2e} q/s, Effective Throughput: {effective:.2e} q/s")
 
     df = pd.DataFrame(results)
     df.to_csv("quantum_network_metrics_refined.csv", index=False)
@@ -357,7 +359,7 @@ if __name__ == "__main__":
         df = pd.read_csv("quantum_network_metrics_refined.csv")
 
         # --- Fidelity Plot ---
-        plt.figure(figsize=(4, 3))
+        plt.figure(figsize=(10, 6))
         for ctype in df['crosstalk_type'].unique():
             subset = df[df['crosstalk_type'] == ctype]
             plt.plot(subset['crosstalk_strength'], subset['fidelity_full_state'], marker='o', label=ctype)
@@ -367,23 +369,21 @@ if __name__ == "__main__":
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig("fidelity_vs_crosstalk_refined.png", dpi=500)
+        plt.savefig("fidelity_vs_crosstalk_refined.png")
         # plt.show() 
 
         # --- Effective Throughput Plot ---
-        plt.figure(figsize=(4, 3))
-        # Format x-axis in scientific notation with 2 decimal places
-        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))  # 'e' for exponential
+        plt.figure(figsize=(10, 6))
         for ctype in df['crosstalk_type'].unique():
             subset = df[df['crosstalk_type'] == ctype]
             plt.plot(subset['crosstalk_strength'], subset['effective_throughput_qubits_per_sec'], marker='s', label=ctype)
         plt.xlabel("Crosstalk Strength")
-        plt.ylabel("Effective Throughput (ops/sec)")
+        plt.ylabel("Effective Throughput (qubits/sec)")
         plt.title("Effective Throughput vs Crosstalk Strength")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig("effective_throughput_vs_crosstalk_refined.png", dpi=500)
+        plt.savefig("effective_throughput_vs_crosstalk_refined.png")
         # plt.show() 
 
     plot_results()

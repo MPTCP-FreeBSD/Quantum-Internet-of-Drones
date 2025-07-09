@@ -1,6 +1,7 @@
 import math
 import time
 import pandas as pd
+import matplotlib.pyplot as plt
 from itertools import combinations
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit_aer import AerSimulator
@@ -193,7 +194,6 @@ def build_crosstalk_noise_model(crosstalk_config):
     
     return noise_model
 
-
 def compute_throughput(fidelity, teleportation_time, shots):
     raw_throughput = shots / teleportation_time
     effective_throughput = fidelity * raw_throughput
@@ -303,7 +303,7 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
 # Main Execution
 # -------------------------------
 
-def main():
+def main1():
     crosstalk_strengths=[0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1,  0.3, 0.5, 0.8, 1]
     crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz', 'random'] 
     # crosstalk_types=['depolarizing'] 
@@ -349,9 +349,82 @@ def main():
     df.to_excel("quantum_network_metrics_refined.xlsx", index=False)
     print("\n✅ Results saved to CSV and Excel.")
 
+def main2():
+    distances = [10, 20, 50, 100, 200, 500, 1000]  # distances in meters
+    decay_constant = 100  # meters, determines crosstalk decay rate
+    max_crosstalk_strength = 0.1  # p₀: max crosstalk strength at 0 distance
+    crosstalk_type = 'amp_phase'  # You can loop over types if desired
+    crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz', 'random'] 
+
+    results = []
+
+    print("Running simulation with distance-based crosstalk...")
+
+    for d in distances:
+        crosstalk_strength = max_crosstalk_strength * np.exp(-d / decay_constant)
+        print(f"\nDistance = {d}m → Crosstalk Strength = {crosstalk_strength:.5f}")
+
+        crosstalk_config = {
+            'type': crosstalk_type,
+            'strength': crosstalk_strength,
+            'base_1q_error': 0.001,
+            'base_2q_error': 0.005,
+            'pauli_type': 'XX',
+            'coupling_angle': np.pi / 4,
+            'amp_strength': crosstalk_strength / 2,
+            'phase_strength': crosstalk_strength / 2
+        }
+
+        noise_model = build_crosstalk_noise_model(crosstalk_config)
+
+        fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
+            noise_model, shots=1000
+        )
+
+        results.append({
+            'distance_m': d,
+            'crosstalk_strength': crosstalk_strength,
+            'fidelity_qubit_b_only': fidelity_b,
+            'fidelity_full_state': fidelity_full,
+            'latency_sec': latency,
+            'raw_throughput_qubits_per_sec': raw,
+            'effective_throughput_qubits_per_sec': effective,
+        })
+
+        print(f"  → Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Effective Throughput: {effective:.2e}")
+
+    # Save
+    df = pd.DataFrame(results)
+    df.to_csv("quantum_network_vs_distance.csv", index=False)
+    df.to_excel("quantum_network_vs_distance.xlsx", index=False)
+    print("\n✅ Distance-based results saved.")
+
+
 if __name__ == "__main__":
-    main()
-    import matplotlib.pyplot as plt
+
+
+
+    def plot_results_vs_distance():
+        df = pd.read_csv("quantum_network_vs_distance.csv")
+
+        plt.figure(figsize=(4, 3))
+        plt.plot(df['distance_m'], df['fidelity_full_state'], marker='o', color='navy')
+        plt.xlabel("Distance between Drones (m)")
+        plt.ylabel("Full State Fidelity")
+        plt.title("Fidelity vs Distance")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("fidelity_vs_distance.png", dpi=500)
+
+        plt.figure(figsize=(4, 3))
+        plt.plot(df['distance_m'], df['effective_throughput_qubits_per_sec'], marker='s', color='darkgreen')
+        plt.xlabel("Distance between Drones (m)")
+        plt.ylabel("Effective Throughput (ops/sec)")
+        plt.title("Effective Throughput vs Distance")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("throughput_vs_distance.png", dpi=500)
+
 
     def plot_results():
         df = pd.read_csv("quantum_network_metrics_refined.csv")
@@ -386,4 +459,10 @@ if __name__ == "__main__":
         plt.savefig("effective_throughput_vs_crosstalk_refined.png", dpi=500)
         # plt.show() 
 
+    main1()
+
     plot_results()
+
+    main2()
+
+    plot_results_vs_distance()
