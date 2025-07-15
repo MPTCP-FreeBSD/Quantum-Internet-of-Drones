@@ -360,38 +360,40 @@ def main2():
 
     print("Running simulation with distance-based crosstalk...")
 
-    for d in distances:
-        crosstalk_strength = max_crosstalk_strength * np.exp(-d / decay_constant)
-        print(f"\nDistance = {d}m → Crosstalk Strength = {crosstalk_strength:.5f}")
+    for crosstalk_type in crosstalk_types:
+        for d in distances:
+            crosstalk_strength = max_crosstalk_strength * np.exp(-d / decay_constant)
+            print(f"\nDistance = {d}m → Crosstalk Strength = {crosstalk_strength:.5f}")
 
-        crosstalk_config = {
-            'type': crosstalk_type,
-            'strength': crosstalk_strength,
-            'base_1q_error': 0.001,
-            'base_2q_error': 0.005,
-            'pauli_type': 'XX',
-            'coupling_angle': np.pi / 4,
-            'amp_strength': crosstalk_strength / 2,
-            'phase_strength': crosstalk_strength / 2
-        }
+            crosstalk_config = {
+                'type': crosstalk_type,
+                'strength': crosstalk_strength,
+                'base_1q_error': 0.001,
+                'base_2q_error': 0.005,
+                'pauli_type': 'XX',
+                'coupling_angle': np.pi / 4,
+                'amp_strength': crosstalk_strength / 2,
+                'phase_strength': crosstalk_strength / 2
+            }
 
-        noise_model = build_crosstalk_noise_model(crosstalk_config)
+            noise_model = build_crosstalk_noise_model(crosstalk_config)
 
-        fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
-            noise_model, shots=1000
-        )
+            fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
+                noise_model, shots=1000
+            )
 
-        results.append({
-            'distance_m': d,
-            'crosstalk_strength': crosstalk_strength,
-            'fidelity_qubit_b_only': fidelity_b,
-            'fidelity_full_state': fidelity_full,
-            'latency_sec': latency,
-            'raw_throughput_qubits_per_sec': raw,
-            'effective_throughput_qubits_per_sec': effective,
-        })
+            results.append({
+                'distance_m': d,
+                'crosstalk_type': crosstalk_type,
+                'crosstalk_strength': crosstalk_strength,
+                'fidelity_qubit_b_only': fidelity_b,
+                'fidelity_full_state': fidelity_full,
+                'latency_sec': latency,
+                'raw_throughput_qubits_per_sec': raw,
+                'effective_throughput_qubits_per_sec': effective,
+            })
 
-        print(f"  → Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Effective Throughput: {effective:.2e}")
+            print(f"  → Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Effective Throughput: {effective:.2e}")
 
     # Save
     df = pd.DataFrame(results)
@@ -424,6 +426,36 @@ if __name__ == "__main__":
         plt.grid(True)
         plt.tight_layout()
         plt.savefig("throughput_vs_distance.png", dpi=500)
+
+                # --- Fidelity Plot ---
+        plt.figure(figsize=(4, 3))
+        for ctype in df['crosstalk_type'].unique():
+            subset = df[df['crosstalk_type'] == ctype]
+            plt.plot(subset['distance_m'], subset['fidelity_full_state'], marker='o', label=ctype)
+        plt.xlabel("Distance between Drones (m)")
+        plt.ylabel("Full State Fidelity")
+        plt.title("Fidelity vs Distance")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("fidelity_vs_distance.png", dpi=500)
+        # plt.show() 
+
+        # --- Effective Throughput Plot ---
+        plt.figure(figsize=(4, 3))
+        # Format x-axis in scientific notation with 2 decimal places
+        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))  # 'e' for exponential
+        for ctype in df['crosstalk_type'].unique():
+            subset = df[df['crosstalk_type'] == ctype]
+            plt.plot(subset['distance_m'], subset['effective_throughput_qubits_per_sec'], marker='s', label=ctype)
+        plt.xlabel("Distance between Drones (m)")
+        plt.ylabel("Effective Throughput (ops/sec)")
+        plt.title("Effective Throughput vs Distance")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("effective_throughput_vs_distance.png", dpi=500)
+        # plt.show() 
 
 
     def plot_results():
