@@ -29,7 +29,6 @@ from qiskit_aer.noise import (
 )
 from typing import List, Tuple, Dict, Any
 
-
 # Import your custom teleportation circuit builder
 from utils.ibm_lab_util import build_qc  # Ensure this file and function exist
 
@@ -45,8 +44,7 @@ def init_qc():
 
     return state_prep.compose(teleportation_circuit), qr, cr, qr[2]
 
-
-
+# No changes needed for these helper functions for creating Kraus/Error objects
 def create_pauli_crosstalk_kraus( strength: float, pauli_type: str = 'XX') -> Kraus:
     """Create Pauli-based crosstalk Kraus operators."""
     I = np.eye(2)
@@ -65,44 +63,29 @@ def create_pauli_crosstalk_kraus( strength: float, pauli_type: str = 'XX') -> Kr
     K0 = np.sqrt(1 - strength) * np.eye(4)
     K1 = np.sqrt(strength) * pauli_op
     
-    # Ensure CPTP condition
-    norm_check = K0.conj().T @ K0 + K1.conj().T @ K1
-    if not np.allclose(norm_check, np.eye(4), atol=1e-10):
-        # Renormalize
-        total_norm = np.trace(norm_check)
-        K0 = K0 / np.sqrt(total_norm)
-        K1 = K1 / np.sqrt(total_norm)
-        
     return Kraus([K0, K1])
 
 def create_zz_crosstalk_kraus( strength: float, coupling_angle: float = 0.0) -> Kraus:
     """Create ZZ-coupling crosstalk (common in superconducting qubits)."""
-    # ZZ interaction: exp(-i * strength * Z⊗Z * coupling_angle)
-    ZZ = np.kron(np.array([[1, 0], [0, -1]]), np.array([[1, 0], [0, -1]]))
+    theta = strength * coupling_angle
     
-    # Unitary evolution under ZZ coupling
     zz_unitary = np.array([
-        [np.exp(-1j * strength * coupling_angle), 0, 0, 0],
-        [0, np.exp(1j * strength * coupling_angle), 0, 0],
-        [0, 0, np.exp(1j * strength * coupling_angle), 0],
-        [0, 0, 0, np.exp(-1j * strength * coupling_angle)]
+        [np.exp(-1j * theta), 0, 0, 0],
+        [0, np.exp(1j * theta), 0, 0],
+        [0, 0, np.exp(1j * theta), 0],
+        [0, 0, 0, np.exp(-1j * theta)]
     ])
     
-    # Convert to Kraus (unitary channel has single Kraus operator)
     return Kraus([zz_unitary])
 
 def create_amplitude_phase_crosstalk_error( amp_strength: float, phase_strength: float):
     """Create combined amplitude and phase crosstalk using Qiskit's built-in error models."""
-    # Use Qiskit's built-in amplitude and phase damping errors
-    amp_error = amplitude_damping_error(amp_strength)
-    phase_error = phase_damping_error(phase_strength)
+    amp_error_1q = amplitude_damping_error(amp_strength)
+    phase_error_1q = phase_damping_error(phase_strength)
     
-    # For 2-qubit crosstalk, we'll create correlated errors
-    # First, create single-qubit errors for each qubit
-    amp_error_2q = amp_error.tensor(amp_error)  # Independent amplitude damping on both qubits
-    phase_error_2q = phase_error.tensor(phase_error)  # Independent phase damping on both qubits
+    amp_error_2q = amp_error_1q.tensor(amp_error_1q)
+    phase_error_2q = phase_error_1q.tensor(phase_error_1q)
     
-    # Combine them (this creates a mixed error model)
     combined_error = amp_error_2q.compose(phase_error_2q)
     
     return combined_error
@@ -114,27 +97,17 @@ def create_depolarizing_crosstalk_error( strength: float):
 def create_random_crosstalk_kraus( strength: float, num_operators: int = 4) -> Kraus:
     """Create random crosstalk using random unitary matrices."""
     kraus_ops = []
-    remaining_strength = 1.0
     
-    for i in range(num_operators - 1):
-        # Random strength for this operator
-        op_strength = np.random.uniform(0, remaining_strength * strength)
-        remaining_strength -= op_strength / strength
-        
-        # Random 4x4 unitary
+    random_probs = np.random.dirichlet(np.ones(num_operators - 1)) * strength
+    
+    for prob in random_probs:
         random_u = random_unitary(4).data
-        kraus_ops.append(np.sqrt(op_strength) * random_u)
+        kraus_ops.append(np.sqrt(prob) * random_u)
     
-    # Last operator gets remaining strength
-    final_strength = remaining_strength * strength
-    if final_strength > 0:
-        random_u = random_unitary(4).data
-        kraus_ops.append(np.sqrt(final_strength) * random_u)
-    
-    # Identity component
     kraus_ops.insert(0, np.sqrt(1 - strength) * np.eye(4))
     
     return Kraus(kraus_ops)
+
 
 def build_crosstalk_noise_model(crosstalk_config):
     """
@@ -152,53 +125,71 @@ def build_crosstalk_noise_model(crosstalk_config):
     thermal_t2 = crosstalk_config.get('t2_time', 30e-6)
     gate_time = crosstalk_config.get('gate_time', 100e-9)
     
-    # Single-qubit errors
+    # --- Single-qubit errors (Depolarizing and Thermal Relaxation) ---
+    # Applied to ALL single-qubit gates on ALL qubits (q[0], q[1], q[2])
+    # Why: Every qubit interacts with its environment, leading to decoherence.
+    # Depolarizing error models information loss due to random mixing with the maximally mixed state.
+    # Thermal relaxation models energy decay (T1) and dephasing (T2) over time.
+    # These errors affect gates like Hadamard (h) on qr[0] and qr[1], Rx on qr[0],
+    # and conditional X/Z gates on qr[2].
     if base_1q_error > 0:
         depol_1q = depolarizing_error(base_1q_error, 1)
         thermal_1q = thermal_relaxation_error(thermal_t1, thermal_t2, gate_time)
         combined_1q = depol_1q.compose(thermal_1q)
         noise_model.add_all_qubit_quantum_error(combined_1q, ['x', 'y', 'z', 'h', 'rx', 'ry', 'rz'])
+        print(f"  → Applied base 1-qubit depolarizing ({base_1q_error:.4f}) and thermal relaxation (T1={thermal_t1*1e6}us, T2={thermal_t2*1e6}us) to ALL single-qubit gates on all qubits.")
     
-    # Base two-qubit errors
+    # --- Base two-qubit errors (Depolarizing) ---
+    # Applied to ALL two-qubit gates on ALL valid qubit pairs.
+    # In this teleportation circuit, these are the CNOT gates: cx(qr[1], qr[2]) and cx(qr[0], qr[1]).
+    # Why: Two-qubit gates are more complex and resource-intensive, making them inherently more prone to errors
+    # due to imperfections in control pulses and increased susceptibility to environmental noise during their operation.
     if base_2q_error > 0:
         depol_2q = depolarizing_error(base_2q_error, 2)
         noise_model.add_all_qubit_quantum_error(depol_2q, ['cx', 'cz'])
+        print(f"  → Applied base 2-qubit depolarizing ({base_2q_error:.4f}) to ALL two-qubit gates (cx, cz).")
     
-    # Add crosstalk to specified pairs
+    # --- Crosstalk Noise ---
+    # These errors model unintended interactions between qubits.
+    # Applied as 2-qubit errors to ALL two-qubit gates (cx, cz) in the circuit.
+    # Why: Crosstalk often manifests during multi-qubit gate operations. When a gate is performed on
+    # one pair of qubits (e.g., qr[0] and qr[1]), the control signals or parasitic physical couplings
+    # might inadvertently affect the state of a nearby qubit (e.g., qr[2]) or introduce correlated errors
+    # between the qubits being operated on. By applying these errors to all CX gates, we simulate a general
+    # presence of such correlated errors during the most interactive parts of the circuit.
+    
     crosstalk_type = crosstalk_config.get('type', 'pauli')
     crosstalk_strength = crosstalk_config.get('strength', 0.01)
     
+    crosstalk_error_obj = None
 
     if crosstalk_type == 'pauli':
         pauli_type = crosstalk_config.get('pauli_type', 'XX')
-        crosstalk_kraus = create_pauli_crosstalk_kraus(crosstalk_strength, pauli_type)
+        crosstalk_error_obj = create_pauli_crosstalk_kraus(crosstalk_strength, pauli_type)
+        print(f"  → Created {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}, type={pauli_type}).")
     elif crosstalk_type == 'zz':
         coupling_angle = crosstalk_config.get('coupling_angle', np.pi/4)
-        crosstalk_kraus = create_zz_crosstalk_kraus(crosstalk_strength, coupling_angle)
+        crosstalk_error_obj = create_zz_crosstalk_kraus(crosstalk_strength, coupling_angle)
+        print(f"  → Created {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}, angle={coupling_angle:.4f} rad).")
     elif crosstalk_type == 'amp_phase':
-        # Use the new method that returns a proper Qiskit error
         amp_strength = crosstalk_config.get('amp_strength', crosstalk_strength/2)
         phase_strength = crosstalk_config.get('phase_strength', crosstalk_strength/2)
-        crosstalk_error = create_amplitude_phase_crosstalk_error(amp_strength, phase_strength)
-        # Apply the error directly
-        noise_model.add_all_qubit_quantum_error(crosstalk_error, ['cx', 'cz'])
-        print(f"  → Applied {crosstalk_type} crosstalk (amp={amp_strength:.4f}, phase={phase_strength:.4f}) to all qubits")
-
+        crosstalk_error_obj = create_amplitude_phase_crosstalk_error(amp_strength, phase_strength)
+        print(f"  → Created combined amplitude/phase crosstalk (amp={amp_strength:.4f}, phase={phase_strength:.4f}).")
     elif crosstalk_type == 'depolarizing':
-        crosstalk_error = create_depolarizing_crosstalk_error(crosstalk_strength)
-        noise_model.add_all_qubit_quantum_error(crosstalk_error, ['cx', 'cz'])
-        print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to all qubits")
-
+        crosstalk_error_obj = create_depolarizing_crosstalk_error(crosstalk_strength)
+        print(f"  → Created 2-qubit {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}).")
     elif crosstalk_type == 'random':
         num_ops = crosstalk_config.get('num_operators', 4)
-        crosstalk_kraus = create_random_crosstalk_kraus(crosstalk_strength, num_ops)
+        crosstalk_error_obj = create_random_crosstalk_kraus(crosstalk_strength, num_ops)
+        print(f"  → Created {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}, operators={num_ops}).")
     else:
         raise ValueError(f"Unknown crosstalk type: {crosstalk_type}")
     
-    # Apply crosstalk to 2-qubit gates on this pair (only for Kraus-based methods)
-    if crosstalk_type in ['pauli', 'zz', 'random']:
-        noise_model.add_all_qubit_quantum_error(crosstalk_kraus, ['cx', 'cz'],)
-        print(f"  → Applied {crosstalk_type} crosstalk (strength={crosstalk_strength:.4f}) to all qubits")
+    # Apply the generated crosstalk error to ALL two-qubit gates (CX, CZ)
+    if crosstalk_error_obj:
+        noise_model.add_all_qubit_quantum_error(crosstalk_error_obj, ['cx', 'cz'])
+        print(f"  → Applied {crosstalk_type} crosstalk error to all 'cx' and 'cz' gates in the circuit.")
     
     return noise_model
 
@@ -208,67 +199,103 @@ def compute_throughput(fidelity, teleportation_time, shots):
     effective_throughput = fidelity * raw_throughput
     return raw_throughput, effective_throughput
 
-# # Example
-# shots = 1000
-# teleportation_time = 10e-6  # seconds
-# fidelity = 0.92
-
-# raw, effective = compute_throughput(fidelity, teleportation_time, shots)
-# print(f"Raw Throughput:       {raw:.2e} qubits/sec")
-# print(f"Effective Throughput: {effective:.2e} qubits/sec")
-
+def calculate_quantum_throughput(fidelity, gate_time_us=0.1, readout_time_us=1.0, 
+                                fidelity_threshold=0.95, circuit_depth=4):
+    """
+    Calculate quantum throughput metrics.
+    
+    Args:
+        fidelity: State fidelity after crosstalk
+        gate_time_us: Gate execution time in microseconds
+        readout_time_us: Readout time in microseconds
+        fidelity_threshold: Minimum acceptable fidelity
+        circuit_depth: Number of gates in circuit
+    
+    Returns:
+        Dictionary with throughput metrics
+    """
+    # Basic timing
+    total_time_us = circuit_depth * gate_time_us + readout_time_us
+    
+    # Effective operations per second (only counting successful operations)
+    if fidelity >= fidelity_threshold:
+        success_rate = fidelity  # Simplified model
+        effective_ops_per_sec = (1e6 / total_time_us) * success_rate
+    else:
+        effective_ops_per_sec = 0  # Below threshold
+    
+    # Quantum volume approximation (simplified)
+    quantum_volume = min(circuit_depth, 2**circuit_depth * fidelity)
+    
+    # Information throughput (bits/second)
+    # Assumes each operation processes log2(circuit_depth) bits of quantum information
+    info_throughput = effective_ops_per_sec * np.log2(max(circuit_depth, 2))
+    
+    # Error-corrected throughput (accounts for error correction overhead)
+    if fidelity > 0.999:
+        ec_overhead = 1.1  # Minimal overhead for high fidelity
+    elif fidelity > 0.99:
+        ec_overhead = 5.0  # Moderate overhead
+    elif fidelity > 0.95:
+        ec_overhead = 50.0  # High overhead
+    else:
+        ec_overhead = np.inf  # Error correction impossible
+    
+    ec_throughput = effective_ops_per_sec / ec_overhead if ec_overhead != np.inf else 0
+    
+    return {
+        'total_time_us': total_time_us,
+        'raw_ops_per_sec': 1e6 / total_time_us,
+        'effective_ops_per_sec': effective_ops_per_sec,
+        'quantum_volume': quantum_volume,
+        'info_throughput_bits_per_sec': info_throughput,
+        'error_corrected_throughput': ec_throughput,
+        'success_rate': fidelity if fidelity >= fidelity_threshold else 0
+    }
 
 def evaluate_teleportation_segment(noise_model, shots=1000):
     """Run teleportation with noise and return fidelity, latency, and throughput."""
     # Step 1: Get teleportation circuit
-    teleport_circuit, qr, cr, b = init_qc()
-    # teleport_circuit.draw("mpl", cregbundle=False)
+    teleport_circuit, qr, cr, b = init_qc() # b is now qr[2]
 
     # Step 2: Simulators
     ideal_sim = AerSimulator(method="density_matrix")
     noisy_sim = AerSimulator(noise_model=noise_model, method="density_matrix")
     
-    # Save statevectors
-    ideal_circuit = teleport_circuit.copy()
+    ideal_circuit_dm = teleport_circuit.copy()
+    noisy_circuit_dm = teleport_circuit.copy()
+    
+    ideal_circuit_dm.save_density_matrix()
+    noisy_circuit_dm.save_density_matrix()
 
+    noisy_circuit_dm = transpile(noisy_circuit_dm, noisy_sim)
 
-    noisy_circuit = transpile(teleport_circuit, noisy_sim)
+    ideal_result_dm = ideal_sim.run(ideal_circuit_dm).result()
+    noisy_result_dm = noisy_sim.run(noisy_circuit_dm).result()
 
+    ideal_dm = DensityMatrix(ideal_result_dm.data(0)['density_matrix'])
+    noisy_dm = DensityMatrix(noisy_result_dm.data(0)['density_matrix'])
 
-    # new - valid for density_matrix method
-    ideal_circuit.save_density_matrix()
-    noisy_circuit.save_density_matrix()
-
-    ideal_result = ideal_sim.run(ideal_circuit).result()
-    noisy_result = noisy_sim.run(noisy_circuit).result()
-
-    from qiskit.quantum_info import DensityMatrix
-
-    ideal_dm = DensityMatrix(ideal_result.data(0)['density_matrix'])
-    noisy_dm = DensityMatrix(noisy_result.data(0)['density_matrix'])
-
-
-    ideal_result = ideal_sim.run(ideal_circuit, shots=shots).result()
-    noisy_result = noisy_sim.run(noisy_circuit, shots=shots).result()
-
-
-    # Step 3: Fidelity
     # Step 3: Fidelity (using partial trace on density matrices)
-    ideal_b = partial_trace(ideal_dm, [0, 1])
-    noisy_b = partial_trace(noisy_dm, [0, 1])
+    # The target qubit is qr[2] (qubit 'b').
+    # We need to trace out qubits qr[0] ('s') and qr[1] ('a').
+    # The `partial_trace` function takes the indices of qubits to *keep*.
+    # Alternatively, it takes the indices of qubits to *trace out*.
+    # If the input DM is 3-qubit, and we want qr[2] (index 2), we trace out [0, 1].
+    ideal_b = partial_trace(ideal_dm, [0, 1]) # Trace out qr[0] and qr[1]
+    noisy_b = partial_trace(noisy_dm, [0, 1]) # Trace out qr[0] and qr[1]
 
     fidelity_b = state_fidelity(ideal_b, noisy_b)
-    fidelity_full = state_fidelity(ideal_dm, noisy_dm)
-
+    fidelity_full = state_fidelity(ideal_dm, noisy_dm) # Fidelity of the full 3-qubit state
 
     # Step 4: Latency and Throughput
-    measured_circuit = teleport_circuit.copy()
-    measured_circuit.measure_all()
-
-
-    teleportation_time = 10e-6  # 10 microseconds
+    teleportation_time = 10e-6  # Fixed 10 microseconds
 
     raw, effective = compute_throughput(fidelity_full, teleportation_time, shots)
+    result_thrpt = calculate_quantum_throughput(fidelity_full)
+
+    raw = result_thrpt['raw_ops_per_sec']
+    effective = result_thrpt['effective_ops_per_sec']
 
     return fidelity_b, fidelity_full, teleportation_time, raw, effective
 
@@ -277,15 +304,16 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
 # -------------------------------
 
 def main():
-    crosstalk_strengths=[0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.3, 0.5, 0.8, 1]
-    crosstalk_types=['amp_phase', 'pauli', 'depolarizing']
+    crosstalk_strengths=[0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1,  0.3, 0.5, 0.8, 1]
+    crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz', 'random'] 
+    # crosstalk_types=['depolarizing'] 
     results=[]
     
+    print("Starting teleportation simulation with various crosstalk noise models...")
+
     for crosstalk_strength in crosstalk_strengths:
         for crosstalk_type in crosstalk_types:
-
-            print("crosstalk_strength",crosstalk_strength)
-            print("crosstalk_type",crosstalk_type)
+            print(f"\nSimulating with: Crosstalk Strength = {crosstalk_strength}, Type = {crosstalk_type}")
 
             crosstalk_config = {
                 'type': crosstalk_type,
@@ -299,9 +327,14 @@ def main():
             }
             noise_model = build_crosstalk_noise_model(crosstalk_config)
 
-            fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(noise_model)
+            shots_for_throughput = 1000 
+            fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
+                noise_model, shots=shots_for_throughput
+            )
 
             results.append({
+                'crosstalk_type': crosstalk_type,
+                'crosstalk_strength': crosstalk_strength,
                 'fidelity_qubit_b_only': fidelity_b,
                 'fidelity_full_state': fidelity_full,
                 'latency_sec': latency,
@@ -309,33 +342,84 @@ def main():
                 'effective_throughput_qubits_per_sec': effective,
             })
 
-            print(f"  → Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Latency: {latency:.4e}s, Raw Throughput: {raw:.2e} q/s, Effective Throughput: {effective:.2e} q/s")
+            print(f"  → Results: Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Latency: {latency:.4e}s, Raw Throughput: {raw:.2e} q/s, Effective Throughput: {effective:.2e} q/s")
 
     df = pd.DataFrame(results)
-    df.to_csv("quantum_network_metrics.csv", index=False)
-    df.to_excel("quantum_network_metrics.xlsx", index=False)
+    df.to_csv("quantum_network_metrics_refined.csv", index=False)
+    df.to_excel("quantum_network_metrics_refined.xlsx", index=False)
+    print("\n✅ Results saved to CSV and Excel.")
+
+
+
+
+def compute(cross_strength,network_topology_type):
+    crosstalk_strengths=[cross_strength]
+    crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz', 'random'] 
+    # crosstalk_types=['depolarizing'] 
+    results=[]
+    
+    print("Starting teleportation simulation with various crosstalk noise models...")
+
+    for crosstalk_strength in crosstalk_strengths:
+        for crosstalk_type in crosstalk_types:
+            print(f"\nSimulating with: Crosstalk Strength = {crosstalk_strength}, Type = {crosstalk_type}")
+
+            crosstalk_config = {
+                'type': crosstalk_type,
+                'strength': crosstalk_strength,
+                'base_1q_error': 0.001,
+                'base_2q_error': 0.005,
+                'pauli_type': 'XX',  # for Pauli crosstalk
+                'coupling_angle': np.pi/4,  # for ZZ crosstalk
+                'amp_strength': crosstalk_strength/2,  # for amp_phase crosstalk
+                'phase_strength': crosstalk_strength/2
+            }
+            noise_model = build_crosstalk_noise_model(crosstalk_config)
+
+            shots_for_throughput = 1000 
+            fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
+                noise_model, shots=shots_for_throughput
+            )
+
+            results.append({
+                'crosstalk_type': crosstalk_type,
+                'crosstalk_strength': crosstalk_strength,
+                'fidelity_qubit_b_only': fidelity_b,
+                'fidelity_full_state': fidelity_full,
+                'latency_sec': latency,
+                'raw_throughput_qubits_per_sec': raw,
+                'effective_throughput_qubits_per_sec': effective,
+            })
+
+            print(f"  → Results: Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Latency: {latency:.4e}s, Raw Throughput: {raw:.2e} q/s, Effective Throughput: {effective:.2e} q/s")
+
+    df = pd.DataFrame(results)
+    df.to_csv(f"quantum_network_metrics_refined_{network_topology_type}.csv", index=False)
+    df.to_excel(f"quantum_network_metrics_refined_{network_topology_type}.xlsx", index=False)
     print("\n✅ Results saved to CSV and Excel.")
 
 if __name__ == "__main__":
     main()
+    
+    net_crosstalk = {"Bus":0.467,
+                     "Ring":0.167,
+                     "Star":0.267,
+                     "Mesh":0}
+    
+    for topology, ct_str in net_crosstalk.items():
+        print(f"Topology: {topology}, Crosstalk: {ct_str}")
+    
+
+
+
     import matplotlib.pyplot as plt
 
-    def plot_results():
-        df = pd.read_csv("quantum_network_metrics.csv")
-
-        # Regenerate the column with crosstalk_strength and type since they are not stored in your dict
-        # Assuming crosstalk_strengths and crosstalk_types were used in nested loop
-        crosstalk_strengths = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.3, 0.5, 0.8, 1]
-        crosstalk_types = ['amp_phase', 'pauli', 'depolarizing']
-        repeated_strengths = crosstalk_strengths * len(crosstalk_types)
-        types = [t for t in crosstalk_types for _ in range(len(crosstalk_strengths))]
-
-        df['crosstalk_strength'] = repeated_strengths
-        df['crosstalk_type'] = types
+    def plot_results(network_topology_type):
+        df = pd.read_csv(f"quantum_network_metrics_refined_{network_topology_type}.csv")
 
         # --- Fidelity Plot ---
-        plt.figure(figsize=(10, 6))
-        for ctype in crosstalk_types:
+        plt.figure(figsize=(4, 3))
+        for ctype in df['crosstalk_type'].unique():
             subset = df[df['crosstalk_type'] == ctype]
             plt.plot(subset['crosstalk_strength'], subset['fidelity_full_state'], marker='o', label=ctype)
         plt.xlabel("Crosstalk Strength")
@@ -344,22 +428,23 @@ if __name__ == "__main__":
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig("fidelity_vs_crosstalk.png")
-        plt.show()
+        plt.savefig(f"fidelity_vs_crosstalk_refined_{network_topology_type}.png", dpi=500)
+        # plt.show() 
 
         # --- Effective Throughput Plot ---
-        plt.figure(figsize=(10, 6))
-        for ctype in crosstalk_types:
+        plt.figure(figsize=(4, 3))
+        # Format x-axis in scientific notation with 2 decimal places
+        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))  # 'e' for exponential
+        for ctype in df['crosstalk_type'].unique():
             subset = df[df['crosstalk_type'] == ctype]
             plt.plot(subset['crosstalk_strength'], subset['effective_throughput_qubits_per_sec'], marker='s', label=ctype)
         plt.xlabel("Crosstalk Strength")
-        plt.ylabel("Effective Throughput (qubits/sec)")
+        plt.ylabel("Effective Throughput (ops/sec)")
         plt.title("Effective Throughput vs Crosstalk Strength")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig("effective_throughput_vs_crosstalk.png")
-        plt.show()
+        plt.savefig(f"effective_throughput_vs_crosstalk_refined_{network_topology_type}.png", dpi=500)
+        # plt.show() 
 
     plot_results()
-

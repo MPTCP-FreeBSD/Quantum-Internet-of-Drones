@@ -1,6 +1,7 @@
 import math
 import time
 import pandas as pd
+import matplotlib.pyplot as plt
 from itertools import combinations
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit_aer import AerSimulator
@@ -193,7 +194,6 @@ def build_crosstalk_noise_model(crosstalk_config):
     
     return noise_model
 
-
 def compute_throughput(fidelity, teleportation_time, shots):
     raw_throughput = shots / teleportation_time
     effective_throughput = fidelity * raw_throughput
@@ -303,7 +303,7 @@ def evaluate_teleportation_segment(noise_model, shots=1000):
 # Main Execution
 # -------------------------------
 
-def main():
+def main1():
     crosstalk_strengths=[0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1,  0.3, 0.5, 0.8, 1]
     crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz', 'random'] 
     # crosstalk_types=['depolarizing'] 
@@ -350,101 +350,65 @@ def main():
     print("\n✅ Results saved to CSV and Excel.")
 
 
-
-
-def compute(cross_strength,network_topology_type):
-    crosstalk_strengths=[cross_strength]
-    crosstalk_types=['amp_phase', 'pauli', 'depolarizing', 'zz', 'random'] 
-    # crosstalk_types=['depolarizing'] 
-    results=[]
-    
-    print("Starting teleportation simulation with various crosstalk noise models...")
-
-    for crosstalk_strength in crosstalk_strengths:
-        for crosstalk_type in crosstalk_types:
-            print(f"\nSimulating with: Crosstalk Strength = {crosstalk_strength}, Type = {crosstalk_type}")
-
-            crosstalk_config = {
-                'type': crosstalk_type,
-                'strength': crosstalk_strength,
-                'base_1q_error': 0.001,
-                'base_2q_error': 0.005,
-                'pauli_type': 'XX',  # for Pauli crosstalk
-                'coupling_angle': np.pi/4,  # for ZZ crosstalk
-                'amp_strength': crosstalk_strength/2,  # for amp_phase crosstalk
-                'phase_strength': crosstalk_strength/2
-            }
-            noise_model = build_crosstalk_noise_model(crosstalk_config)
-
-            shots_for_throughput = 1000 
-            fidelity_b, fidelity_full, latency, raw, effective = evaluate_teleportation_segment(
-                noise_model, shots=shots_for_throughput
-            )
-
-            results.append({
-                'crosstalk_type': crosstalk_type,
-                'crosstalk_strength': crosstalk_strength,
-                'fidelity_qubit_b_only': fidelity_b,
-                'fidelity_full_state': fidelity_full,
-                'latency_sec': latency,
-                'raw_throughput_qubits_per_sec': raw,
-                'effective_throughput_qubits_per_sec': effective,
-            })
-
-            print(f"  → Results: Fidelity(B): {fidelity_b:.4f}, Full: {fidelity_full:.4f}, Latency: {latency:.4e}s, Raw Throughput: {raw:.2e} q/s, Effective Throughput: {effective:.2e} q/s")
-
-    df = pd.DataFrame(results)
-    df.to_csv(f"quantum_network_metrics_refined_{network_topology_type}.csv", index=False)
-    df.to_excel(f"quantum_network_metrics_refined_{network_topology_type}.xlsx", index=False)
-    print("\n✅ Results saved to CSV and Excel.")
-
 if __name__ == "__main__":
-    main()
-    
-    net_crosstalk = {"Bus":0.467,
-                     "Ring":0.167,
-                     "Star":0.267,
-                     "Mesh":0}
-    
-    for topology, ct_str in net_crosstalk.items():
-        print(f"Topology: {topology}, Crosstalk: {ct_str}")
-    
+
+    linestyles = ['solid', 'dotted', 'dashed', 'dashdot', (0, (3, 1, 1, 1, 1, 1))]
+    markers = ['o', 's', 'D', '^', 'v', 'p', '*', 'x']         # Add more markers as needed
 
 
 
+    import pandas as pd
     import matplotlib.pyplot as plt
+    import itertools
 
-    def plot_results(network_topology_type):
-        df = pd.read_csv(f"quantum_network_metrics_refined_{network_topology_type}.csv")
+    # Define linestyles and markers
+    markers = ['o', 's', 'D', '^', 'v', 'p', '*', 'x', '+', 'h', '<', '>']
 
-        # --- Fidelity Plot ---
+
+    def plot_results():
+        df = pd.read_csv("quantum_network_metrics_refined.csv")
+        
+        # --- Fidelity vs Crosstalk Strength ---
         plt.figure(figsize=(4, 3))
-        for ctype in df['crosstalk_type'].unique():
+        for i, ctype in enumerate(df['crosstalk_type'].unique()):
             subset = df[df['crosstalk_type'] == ctype]
-            plt.plot(subset['crosstalk_strength'], subset['fidelity_full_state'], marker='o', label=ctype)
+            plt.plot(
+                subset['crosstalk_strength'],
+                subset['fidelity_full_state'],
+                marker=markers[i % len(markers)],
+                linestyle=linestyles[i % len(linestyles)],
+                label=ctype
+            )
         plt.xlabel("Crosstalk Strength")
         plt.ylabel("Full State Fidelity")
-        plt.title("Fidelity vs Crosstalk Strength")
+        # plt.title("Fidelity vs Crosstalk Strength")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig(f"fidelity_vs_crosstalk_refined_{network_topology_type}.png", dpi=500)
-        # plt.show() 
-
-        # --- Effective Throughput Plot ---
+        plt.savefig("fidelity_vs_crosstalk_refined.png", dpi=500)
+        
+        # --- Effective Throughput vs Crosstalk Strength ---
         plt.figure(figsize=(4, 3))
-        # Format x-axis in scientific notation with 2 decimal places
-        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))  # 'e' for exponential
-        for ctype in df['crosstalk_type'].unique():
+        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))
+        for i, ctype in enumerate(df['crosstalk_type'].unique()):
             subset = df[df['crosstalk_type'] == ctype]
-            plt.plot(subset['crosstalk_strength'], subset['effective_throughput_qubits_per_sec'], marker='s', label=ctype)
+            plt.plot(
+                subset['crosstalk_strength'],
+                subset['effective_throughput_qubits_per_sec'],
+                marker=markers[i % len(markers)],
+                linestyle=linestyles[i % len(linestyles)],
+                label=ctype
+            )
         plt.xlabel("Crosstalk Strength")
         plt.ylabel("Effective Throughput (ops/sec)")
-        plt.title("Effective Throughput vs Crosstalk Strength")
+        # plt.title("Effective Throughput vs Crosstalk Strength")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig(f"effective_throughput_vs_crosstalk_refined_{network_topology_type}.png", dpi=500)
-        # plt.show() 
+        plt.savefig("effective_throughput_vs_crosstalk_refined.png", dpi=500)
+
+
+
+    main1()
 
     plot_results()
