@@ -391,12 +391,11 @@ def main():
 
 #     plot_results()
 
-net_crosstalk = {
-    "Bus": 0.467,
-    "Ring": 0.167,
-    "Star": 0.267,
-    "Mesh": 0
-}
+
+from utils.compute_tp_ct_st import get_tp_ct_st
+net_crosstalk = get_tp_ct_st()
+# Dynamically round all values to two decimal places
+net_crosstalk = {k: round(v, 3) for k, v in net_crosstalk.items()}
 
 import matplotlib.pyplot as plt
 
