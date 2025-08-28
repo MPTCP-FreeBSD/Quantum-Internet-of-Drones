@@ -449,14 +449,23 @@ def plot_topology_results():
     topologies = list(net_crosstalk.keys())
 
     # --- Fidelity Plot ---
+    linestyles = ['solid', 'dotted', 'dashed', 'dashdot', (0, (3, 1, 1, 1, 1, 1))]
+    markers = ['o', 's', 'D', '^', 'v', 'p', '*', 'x']         # Add more markers as needed
+
+    # --- Fidelity Plot ---
     plt.figure(figsize=(4, 3))
-    for ctype in df['crosstalk_type'].unique():
+    for i, ctype in enumerate(df['crosstalk_type'].unique()):
         subset = df[df['crosstalk_type'] == ctype]
-        plt.plot(topologies, [subset[subset['topology']==t]['fidelity_full_state'].values[0] for t in topologies],
-                 marker='o', label=ctype)
+        plt.plot(
+            topologies,
+            [subset[subset['topology']==t]['fidelity_full_state'].values[0] for t in topologies],
+            marker=markers[i % len(markers)],
+            linestyle=linestyles[i % len(linestyles)],
+            label=ctype
+        )
     plt.xlabel("Network Topology")
     plt.ylabel("Full State Fidelity")
-    plt.title("Fidelity vs Network Topology")
+    # plt.title("Fidelity vs Network Topology")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -465,13 +474,18 @@ def plot_topology_results():
     # --- Effective Throughput Plot ---
     plt.figure(figsize=(4, 3))
     plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))
-    for ctype in df['crosstalk_type'].unique():
+    for i, ctype in enumerate(df['crosstalk_type'].unique()):
         subset = df[df['crosstalk_type'] == ctype]
-        plt.plot(topologies, [subset[subset['topology']==t]['effective_throughput_qubits_per_sec'].values[0] for t in topologies],
-                 marker='s', label=ctype)
+        plt.plot(
+            topologies,
+            [subset[subset['topology']==t]['effective_throughput_qubits_per_sec'].values[0] for t in topologies],
+            marker=markers[i % len(markers)],
+            linestyle=linestyles[i % len(linestyles)],
+            label=ctype
+        )
     plt.xlabel("Network Topology")
     plt.ylabel("Effective Throughput (ops/sec)")
-    plt.title("Effective Throughput vs Network Topology")
+    # plt.title("Effective Throughput vs Network Topology")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()

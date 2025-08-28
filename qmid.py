@@ -404,34 +404,32 @@ def main2():
 
 if __name__ == "__main__":
 
+    linestyles = ['solid', 'dotted', 'dashed', 'dashdot', (0, (3, 1, 1, 1, 1, 1))]
+    markers = ['o', 's', 'D', '^', 'v', 'p', '*', 'x']         # Add more markers as needed
 
+
+
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import itertools
+
+    # Define linestyles and markers
+    markers = ['o', 's', 'D', '^', 'v', 'p', '*', 'x', '+', 'h', '<', '>']
 
     def plot_results_vs_distance():
         df = pd.read_csv("quantum_network_vs_distance.csv")
-
+        
+        # --- Fidelity vs Distance ---
         plt.figure(figsize=(4, 3))
-        plt.plot(df['distance_m'], df['fidelity_full_state'], marker='o', color='navy')
-        plt.xlabel("Distance between Drones (m)")
-        plt.ylabel("Full State Fidelity")
-        plt.title("Fidelity vs Distance")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig("fidelity_vs_distance.png", dpi=500)
-
-        plt.figure(figsize=(4, 3))
-        plt.plot(df['distance_m'], df['effective_throughput_qubits_per_sec'], marker='s', color='darkgreen')
-        plt.xlabel("Distance between Drones (m)")
-        plt.ylabel("Effective Throughput (ops/sec)")
-        plt.title("Effective Throughput vs Distance")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig("throughput_vs_distance.png", dpi=500)
-
-                # --- Fidelity Plot ---
-        plt.figure(figsize=(4, 3))
-        for ctype in df['crosstalk_type'].unique():
+        for i, ctype in enumerate(df['crosstalk_type'].unique()):
             subset = df[df['crosstalk_type'] == ctype]
-            plt.plot(subset['distance_m'], subset['fidelity_full_state'], marker='o', label=ctype)
+            plt.plot(
+                subset['distance_m'],
+                subset['fidelity_full_state'],
+                marker=markers[i % len(markers)],
+                linestyle=linestyles[i % len(linestyles)],
+                label=ctype
+            )
         plt.xlabel("Distance between Drones (m)")
         plt.ylabel("Full State Fidelity")
         plt.title("Fidelity vs Distance")
@@ -439,15 +437,19 @@ if __name__ == "__main__":
         plt.grid(True)
         plt.tight_layout()
         plt.savefig("fidelity_vs_distance.png", dpi=500)
-        # plt.show() 
-
-        # --- Effective Throughput Plot ---
+        
+        # --- Effective Throughput vs Distance ---
         plt.figure(figsize=(4, 3))
-        # Format x-axis in scientific notation with 2 decimal places
-        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))  # 'e' for exponential
-        for ctype in df['crosstalk_type'].unique():
+        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))
+        for i, ctype in enumerate(df['crosstalk_type'].unique()):
             subset = df[df['crosstalk_type'] == ctype]
-            plt.plot(subset['distance_m'], subset['effective_throughput_qubits_per_sec'], marker='s', label=ctype)
+            plt.plot(
+                subset['distance_m'],
+                subset['effective_throughput_qubits_per_sec'],
+                marker=markers[i % len(markers)],
+                linestyle=linestyles[i % len(linestyles)],
+                label=ctype
+            )
         plt.xlabel("Distance between Drones (m)")
         plt.ylabel("Effective Throughput (ops/sec)")
         plt.title("Effective Throughput vs Distance")
@@ -455,46 +457,58 @@ if __name__ == "__main__":
         plt.grid(True)
         plt.tight_layout()
         plt.savefig("effective_throughput_vs_distance.png", dpi=500)
-        # plt.show() 
+
+
 
 
     def plot_results():
         df = pd.read_csv("quantum_network_metrics_refined.csv")
-
-        # --- Fidelity Plot ---
+        
+        # --- Fidelity vs Crosstalk Strength ---
         plt.figure(figsize=(4, 3))
-        for ctype in df['crosstalk_type'].unique():
+        for i, ctype in enumerate(df['crosstalk_type'].unique()):
             subset = df[df['crosstalk_type'] == ctype]
-            plt.plot(subset['crosstalk_strength'], subset['fidelity_full_state'], marker='o', label=ctype)
+            plt.plot(
+                subset['crosstalk_strength'],
+                subset['fidelity_full_state'],
+                marker=markers[i % len(markers)],
+                linestyle=linestyles[i % len(linestyles)],
+                label=ctype
+            )
         plt.xlabel("Crosstalk Strength")
         plt.ylabel("Full State Fidelity")
-        plt.title("Fidelity vs Crosstalk Strength")
+        # plt.title("Fidelity vs Crosstalk Strength")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
         plt.savefig("fidelity_vs_crosstalk_refined.png", dpi=500)
-        # plt.show() 
-
-        # --- Effective Throughput Plot ---
+        
+        # --- Effective Throughput vs Crosstalk Strength ---
         plt.figure(figsize=(4, 3))
-        # Format x-axis in scientific notation with 2 decimal places
-        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))  # 'e' for exponential
-        for ctype in df['crosstalk_type'].unique():
+        plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter('%.2e'))
+        for i, ctype in enumerate(df['crosstalk_type'].unique()):
             subset = df[df['crosstalk_type'] == ctype]
-            plt.plot(subset['crosstalk_strength'], subset['effective_throughput_qubits_per_sec'], marker='s', label=ctype)
+            plt.plot(
+                subset['crosstalk_strength'],
+                subset['effective_throughput_qubits_per_sec'],
+                marker=markers[i % len(markers)],
+                linestyle=linestyles[i % len(linestyles)],
+                label=ctype
+            )
         plt.xlabel("Crosstalk Strength")
         plt.ylabel("Effective Throughput (ops/sec)")
-        plt.title("Effective Throughput vs Crosstalk Strength")
+        # plt.title("Effective Throughput vs Crosstalk Strength")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
         plt.savefig("effective_throughput_vs_crosstalk_refined.png", dpi=500)
-        # plt.show() 
+
+
 
     main1()
 
     plot_results()
 
-    main2()
+    # main2()
 
-    plot_results_vs_distance()
+    # plot_results_vs_distance()
